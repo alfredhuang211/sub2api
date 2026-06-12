@@ -1,0 +1,239 @@
+import { apiClient } from './client'
+import type { PaginatedResponse } from '@/types'
+
+export type AgentLevel = 1 | 2 | 3
+export type AgentStatus = 'active' | 'disabled'
+export type SettlementStatus = 'pending' | 'frozen' | 'payable' | 'paid' | 'reversed'
+
+export interface ListParams {
+  page?: number
+  page_size?: number
+  search?: string
+}
+
+export interface AgentProfile {
+  id: number
+  user_id: number
+  username: string
+  email: string
+  level: AgentLevel
+  parent_agent_id?: number | null
+  parent_username?: string | null
+  parent_email?: string | null
+  status: AgentStatus
+  rate_bps: number
+  children_count: number
+  customers_count: number
+  payable_amount: number
+  frozen_amount: number
+  created_at: string
+}
+
+export interface AgentSummary {
+  total_agents: number
+  active_agents: number
+  disabled_agents: number
+  direct_customers: number
+  child_agents: number
+  confirmed_revenue: number
+  commission_amount: number
+  payable_amount: number
+  reversed_amount: number
+}
+
+export interface AgentCustomer {
+  id: number
+  user_id: number
+  email: string
+  username: string
+  source: 'referral' | 'manual'
+  source_referral_code?: string | null
+  agent_id: number
+  agent_name: string
+  subscription_name?: string | null
+  period_end_at?: string | null
+  confirmed_revenue: number
+  status: string
+}
+
+export interface AgentCommission {
+  id: number
+  customer_email: string
+  order_id: number
+  period_start_at: string
+  period_end_at: string
+  order_paid_amount: number
+  confirmed_revenue: number
+  rate_bps: number
+  commission_amount: number
+  reverse_amount: number
+  reverse_reason_type?: string | null
+  status: SettlementStatus
+}
+
+export interface AgentSettlement {
+  id: number
+  agent_id: number
+  agent_email: string
+  period_month: string
+  amount: number
+  reverse_amount: number
+  net_amount: number
+  status: SettlementStatus
+  frozen_until?: string | null
+  paid_at?: string | null
+}
+
+export interface AgentAuditLog {
+  id: number
+  operator_email: string
+  operator_role: 'admin' | 'agent'
+  action: string
+  target_type: string
+  target_id: number
+  reason?: string | null
+  created_at: string
+}
+
+export interface CreateAgentRequest {
+  user_id: number
+  level: AgentLevel
+  parent_agent_id?: number | null
+  rate_bps?: number
+}
+
+export interface UpdateAgentRequest {
+  level?: AgentLevel
+  parent_agent_id?: number | null
+  rate_bps?: number
+}
+
+export interface AssignCustomerRequest {
+  customer_user_id: number
+  agent_id: number
+  reason: string
+}
+
+export async function getAdminAgentSummary() {
+  const { data } = await apiClient.get<AgentSummary>('/admin/agents/summary')
+  return data
+}
+
+export async function listAgents(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentProfile>>('/admin/agents', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function getAgent(id: number) {
+  const { data } = await apiClient.get<AgentProfile>(`/admin/agents/${id}`)
+  return data
+}
+
+export async function createAgent(payload: CreateAgentRequest) {
+  const { data } = await apiClient.post<AgentProfile>('/admin/agents', payload)
+  return data
+}
+
+export async function updateAgent(id: number, payload: UpdateAgentRequest) {
+  const { data } = await apiClient.put<AgentProfile>(`/admin/agents/${id}`, payload)
+  return data
+}
+
+export async function disableAgent(id: number) {
+  const { data } = await apiClient.post<AgentProfile>(`/admin/agents/${id}/disable`)
+  return data
+}
+
+export async function restoreAgent(id: number) {
+  const { data } = await apiClient.post<AgentProfile>(`/admin/agents/${id}/restore`)
+  return data
+}
+
+export async function listAgentCustomers(agentId: number, params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCustomer>>(
+    `/admin/agents/${agentId}/customers`,
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function assignCustomer(payload: AssignCustomerRequest) {
+  const { data } = await apiClient.post<AgentCustomer>('/admin/agent-customer-relations', payload)
+  return data
+}
+
+export async function listCommissions(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCommission>>(
+    '/admin/agent-commissions',
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function listSettlements(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentSettlement>>(
+    '/admin/agent-settlements',
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function markSettlementPaid(id: number) {
+  const { data } = await apiClient.post<AgentSettlement>(`/admin/agent-settlements/${id}/mark-paid`)
+  return data
+}
+
+export async function listAuditLogs(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentAuditLog>>(
+    '/admin/agent-audit-logs',
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function getMyAgentProfile() {
+  const { data } = await apiClient.get<AgentProfile>('/agent/profile')
+  return data
+}
+
+export async function getMyAgentDashboard() {
+  const { data } = await apiClient.get<AgentSummary>('/agent/dashboard')
+  return data
+}
+
+export async function listMyCustomers(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCustomer>>('/agent/customers', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function listMyCommissions(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCommission>>('/agent/commissions', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function listMySettlements(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentSettlement>>('/agent/settlements', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function getMyUpline() {
+  const { data } = await apiClient.get<AgentProfile | null>('/agent/upline')
+  return data
+}
+
+function withDefaults(params: ListParams) {
+  return {
+    page: params.page ?? 1,
+    page_size: params.page_size ?? 20,
+    search: params.search ?? '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  }
+}

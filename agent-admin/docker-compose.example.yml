@@ -1,0 +1,16 @@
+services:
+  agent-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sub2api-agent-admin:latest
+    container_name: sub2api-agent-admin
+    restart: unless-stopped
+    ports:
+      - "3100:80"
+    networks:
+      - sub2api
+
+networks:
+  sub2api:
+    external: true

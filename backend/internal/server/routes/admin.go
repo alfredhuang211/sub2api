@@ -97,6 +97,9 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+
+		// Agent Admin 代理商管理
+		registerAgentRoutes(admin, h)
 	}
 }
 
@@ -647,4 +650,24 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
 		}
 	}
+}
+
+func registerAgentRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	agents := admin.Group("/agents")
+	{
+		agents.GET("/summary", h.Admin.Agent.Summary)
+		agents.GET("", h.Admin.Agent.List)
+		agents.POST("", h.Admin.Agent.Create)
+		agents.GET("/:id", h.Admin.Agent.Get)
+		agents.PUT("/:id", h.Admin.Agent.Update)
+		agents.POST("/:id/disable", h.Admin.Agent.Disable)
+		agents.POST("/:id/restore", h.Admin.Agent.Restore)
+		agents.GET("/:id/customers", h.Admin.Agent.ListCustomers)
+	}
+
+	admin.POST("/agent-customer-relations", h.Admin.Agent.AssignCustomer)
+	admin.GET("/agent-commissions", h.Admin.Agent.ListCommissions)
+	admin.GET("/agent-settlements", h.Admin.Agent.ListSettlements)
+	admin.POST("/agent-settlements/:id/mark-paid", h.Admin.Agent.MarkSettlementPaid)
+	admin.GET("/agent-audit-logs", h.Admin.Agent.ListAuditLogs)
 }
