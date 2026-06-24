@@ -28,3 +28,8 @@ VITE_DEV_PROXY_TARGET=http://localhost:8080 pnpm dev
 ## Project Boundary
 
 This project intentionally duplicates only the small API/types surface it needs from the main frontend. Avoid importing from `../frontend/src` directly, because that would make this app depend on the main admin UI build structure.
+
+## Docs
+
+- [打包说明](docs/build.md)
+- [启动运行说明](docs/run.md)
