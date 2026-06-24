@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      - 'agent-admin/**'
+      - '.github/workflows/agent-admin-image.yml'
   pull_request:
+    paths-ignore:
+      - 'agent-admin/**'
+      - '.github/workflows/agent-admin-image.yml'
 
 permissions:
   contents: read
