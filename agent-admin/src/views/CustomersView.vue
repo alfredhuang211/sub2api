@@ -2,7 +2,15 @@
 import { onMounted, reactive, ref } from 'vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SectionPanel from '@/components/SectionPanel.vue'
-import { assignCustomer, listAgentCustomers, listAgents, type AgentCustomer, type AgentProfile } from '@/api/agents'
+import {
+  assignCustomer,
+  listAgentCustomers,
+  listAgents,
+  listCustomerRelationChanges,
+  type AgentCustomer,
+  type AgentCustomerRelationChange,
+  type AgentProfile
+} from '@/api/agents'
 import { formatDateTime, formatMinorMoney } from '@/utils/format'
 
 const loading = ref(false)
@@ -10,6 +18,7 @@ const error = ref('')
 const agents = ref<AgentProfile[]>([])
 const selectedAgentId = ref<number | null>(null)
 const customers = ref<AgentCustomer[]>([])
+const changes = ref<AgentCustomerRelationChange[]>([])
 
 const form = reactive({
   customer_user_id: '',
@@ -20,6 +29,7 @@ const form = reactive({
 onMounted(async () => {
   await loadAgents()
   await loadCustomers()
+  await loadChanges()
 })
 
 async function loadAgents() {
@@ -42,6 +52,11 @@ async function loadCustomers() {
   }
 }
 
+async function loadChanges() {
+  const page = await listCustomerRelationChanges({ page_size: 30 })
+  changes.value = page.items ?? []
+}
+
 async function submitAssign() {
   await assignCustomer({
     customer_user_id: Number(form.customer_user_id),
@@ -51,6 +66,7 @@ async function submitAssign() {
   form.customer_user_id = ''
   form.reason = ''
   await loadCustomers()
+  await loadChanges()
 }
 </script>
 
@@ -116,6 +132,37 @@ async function submitAssign() {
         </table>
       </div>
       <EmptyState v-if="!customers.length && !loading" />
+    </SectionPanel>
+
+    <SectionPanel title="归属变更记录" description="记录管理员手动调整原因和实际生效时间">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>客户</th>
+              <th>原代理</th>
+              <th>目标代理</th>
+              <th>生效时间</th>
+              <th>操作人</th>
+              <th>原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="change in changes" :key="change.id">
+              <td>
+                <strong>{{ change.customer_email }}</strong>
+                <small>ID {{ change.customer_user_id }}</small>
+              </td>
+              <td>{{ change.from_agent_email || '-' }}</td>
+              <td>{{ change.to_agent_email || '-' }}</td>
+              <td>{{ formatDateTime(change.effective_at) }}</td>
+              <td>{{ change.operator_email || '-' }}</td>
+              <td>{{ change.reason }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-if="!changes.length && !loading" />
     </SectionPanel>
   </div>
 </template>

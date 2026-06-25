@@ -1,19 +1,48 @@
+package app
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"sort"
+)
+
+type Migration struct {
+	Filename string
+	SQL      string
+}
+
+var migrations = []Migration{
+	{
+		Filename: "001_agent_admin_schema.sql",
+		SQL: `
+CREATE TABLE IF NOT EXISTS agent_admin_schema_migrations (
+    filename TEXT PRIMARY KEY,
+    checksum TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS agent_profiles (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     level SMALLINT NOT NULL,
     parent_agent_id BIGINT NULL REFERENCES agent_profiles(id) ON DELETE SET NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'active',
-    contact_info JSONB NOT NULL DEFAULT '{}'::jsonb,
-    settlement_info JSONB NOT NULL DEFAULT '{}'::jsonb,
+    contact_info JSONB NOT NULL DEFAULT '{}',
+    settlement_info JSONB NOT NULL DEFAULT '{}',
     created_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
     disabled_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_agent_profiles_level CHECK (level IN (1, 2, 3)),
-    CONSTRAINT chk_agent_profiles_status CHECK (status IN ('active', 'disabled'))
+    CONSTRAINT chk_agent_profiles_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT chk_agent_profiles_parent CHECK (
+        (level = 1 AND parent_agent_id IS NULL)
+        OR (level IN (2, 3) AND parent_agent_id IS NOT NULL)
+    )
 );
-
 CREATE INDEX IF NOT EXISTS idx_agent_profiles_parent_agent_id ON agent_profiles(parent_agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_profiles_status ON agent_profiles(status);
 CREATE INDEX IF NOT EXISTS idx_agent_profiles_level ON agent_profiles(level);
@@ -21,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_profiles_level ON agent_profiles(level);
 CREATE TABLE IF NOT EXISTS agent_commission_rates (
     id BIGSERIAL PRIMARY KEY,
     agent_id BIGINT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
-    rate_bps INTEGER NOT NULL,
+    rate_bps INT NOT NULL,
     set_by_user_id BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
     set_by_agent_id BIGINT NULL REFERENCES agent_profiles(id) ON DELETE SET NULL,
     effective_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -30,13 +59,10 @@ CREATE TABLE IF NOT EXISTS agent_commission_rates (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_agent_commission_rates_bps CHECK (rate_bps >= 0 AND rate_bps <= 10000)
 );
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_commission_rates_active_uniq
-ON agent_commission_rates(agent_id)
-WHERE expired_at IS NULL;
-
+    ON agent_commission_rates(agent_id) WHERE expired_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_commission_rates_agent_time
-ON agent_commission_rates(agent_id, effective_at DESC);
+    ON agent_commission_rates(agent_id, effective_at DESC);
 
 CREATE TABLE IF NOT EXISTS agent_customer_relations (
     id BIGSERIAL PRIMARY KEY,
@@ -53,11 +79,8 @@ CREATE TABLE IF NOT EXISTS agent_customer_relations (
     CONSTRAINT chk_agent_customer_relations_source CHECK (source IN ('referral', 'manual')),
     CONSTRAINT chk_agent_customer_relations_status CHECK (status IN ('active', 'expired'))
 );
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_customer_relations_active_customer_uniq
-ON agent_customer_relations(customer_user_id)
-WHERE status = 'active' AND expired_at IS NULL;
-
+    ON agent_customer_relations(customer_user_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_agent_customer_relations_agent_id ON agent_customer_relations(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_customer_relations_customer_user_id ON agent_customer_relations(customer_user_id);
 
@@ -68,12 +91,11 @@ CREATE TABLE IF NOT EXISTS agent_customer_relation_changes (
     to_agent_id BIGINT NULL REFERENCES agent_profiles(id) ON DELETE SET NULL,
     reason TEXT NOT NULL,
     operator_user_id BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
-    effective_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    effective_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE INDEX IF NOT EXISTS idx_agent_customer_relation_changes_customer_user_id
-ON agent_customer_relation_changes(customer_user_id, created_at DESC);
+    ON agent_customer_relation_changes(customer_user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS agent_commission_periods (
     id BIGSERIAL PRIMARY KEY,
@@ -85,20 +107,17 @@ CREATE TABLE IF NOT EXISTS agent_commission_periods (
     period_end_at TIMESTAMPTZ NOT NULL,
     order_paid_amount BIGINT NOT NULL DEFAULT 0,
     confirmed_revenue BIGINT NOT NULL DEFAULT 0,
-    rate_bps INTEGER NOT NULL DEFAULT 0,
+    rate_bps INT NOT NULL,
     commission_amount BIGINT NOT NULL DEFAULT 0,
     reverse_amount BIGINT NOT NULL DEFAULT 0,
     reverse_reason_type VARCHAR(64) NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    status VARCHAR(20) NOT NULL DEFAULT 'frozen',
     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     frozen_until TIMESTAMPTZ NULL,
     settlement_id BIGINT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_agent_commission_periods_status CHECK (status IN ('pending', 'frozen', 'payable', 'paid', 'reversed')),
-    CONSTRAINT chk_agent_commission_periods_rate CHECK (rate_bps >= 0 AND rate_bps <= 10000)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE INDEX IF NOT EXISTS idx_agent_commission_periods_agent_id ON agent_commission_periods(agent_id, period_end_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_commission_periods_customer_user_id ON agent_commission_periods(customer_user_id);
 CREATE INDEX IF NOT EXISTS idx_agent_commission_periods_status ON agent_commission_periods(status);
@@ -117,28 +136,11 @@ CREATE TABLE IF NOT EXISTS agent_settlements (
     paid_by_user_id BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
     payment_reference VARCHAR(128) NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_agent_settlements_status CHECK (status IN ('pending', 'frozen', 'payable', 'paid', 'reversed'))
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_settlements_agent_month_uniq
-ON agent_settlements(agent_id, period_month);
-
+    ON agent_settlements(agent_id, period_month);
 CREATE INDEX IF NOT EXISTS idx_agent_settlements_status ON agent_settlements(status);
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_agent_commission_periods_settlement'
-          AND conrelid = 'agent_commission_periods'::regclass
-    ) THEN
-        ALTER TABLE agent_commission_periods
-        ADD CONSTRAINT fk_agent_commission_periods_settlement
-        FOREIGN KEY (settlement_id) REFERENCES agent_settlements(id) ON DELETE SET NULL;
-    END IF;
-END $$;
 
 CREATE TABLE IF NOT EXISTS agent_audit_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -152,13 +154,83 @@ CREATE TABLE IF NOT EXISTS agent_audit_logs (
     reason TEXT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_agent_audit_logs_created_at ON agent_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_audit_logs_target ON agent_audit_logs(target_type, target_id);
+`,
+	},
+	{
+		Filename: "002_agent_commission_period_unique_indexes.sql",
+		SQL: `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_commission_periods_order_agent_uniq
+    ON agent_commission_periods(order_id, agent_id) WHERE order_id IS NOT NULL;
+`,
+	},
+	{
+		Filename: "003_agent_customer_relation_scheduled_status.sql",
+		SQL: `
+ALTER TABLE agent_customer_relations
+    DROP CONSTRAINT IF EXISTS chk_agent_customer_relations_status;
 
-CREATE INDEX IF NOT EXISTS idx_agent_audit_logs_target ON agent_audit_logs(target_type, target_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_agent_audit_logs_operator_user_id ON agent_audit_logs(operator_user_id, created_at DESC);
+ALTER TABLE agent_customer_relations
+    ADD CONSTRAINT chk_agent_customer_relations_status
+    CHECK (status IN ('active', 'scheduled', 'expired'));
 
-COMMENT ON TABLE agent_profiles IS '代理商档案，与 users 共用账号体系';
-COMMENT ON TABLE agent_commission_rates IS '代理商当前及历史分成比例，单位 bps';
-COMMENT ON TABLE agent_customer_relations IS '客户归属代理关系，一个客户同一时间只能归属一个代理';
-COMMENT ON TABLE agent_commission_periods IS '按套餐周期确认的代理分成记录，金额单位为分';
-COMMENT ON TABLE agent_settlements IS '代理月度结算记录，金额单位为分';
-COMMENT ON TABLE agent_audit_logs IS 'agent-admin 操作审计日志';
+CREATE INDEX IF NOT EXISTS idx_agent_customer_relations_scheduled_effective_at
+    ON agent_customer_relations(effective_at)
+    WHERE status = 'scheduled';
+`,
+	},
+}
+
+func RunMigrations(ctx context.Context, db *sql.DB) error {
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Filename < migrations[j].Filename
+	})
+
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS agent_admin_schema_migrations (
+    filename TEXT PRIMARY KEY,
+    checksum TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`); err != nil {
+		return fmt.Errorf("ensure migration table: %w", err)
+	}
+
+	for _, migration := range migrations {
+		checksum := checksumSQL(migration.SQL)
+		var existing string
+		err := db.QueryRowContext(ctx, `SELECT checksum FROM agent_admin_schema_migrations WHERE filename = $1`, migration.Filename).Scan(&existing)
+		if err == nil {
+			if existing != checksum {
+				return fmt.Errorf("migration %s checksum mismatch", migration.Filename)
+			}
+			continue
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("query migration %s: %w", migration.Filename, err)
+		}
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin migration %s: %w", migration.Filename, err)
+		}
+		if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %s: %w", migration.Filename, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_admin_schema_migrations (filename, checksum) VALUES ($1, $2)`, migration.Filename, checksum); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %s: %w", migration.Filename, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", migration.Filename, err)
+		}
+	}
+
+	return nil
+}
+
+func checksumSQL(sqlText string) string {
+	sum := sha256.Sum256([]byte(sqlText))
+	return hex.EncodeToString(sum[:])
+}

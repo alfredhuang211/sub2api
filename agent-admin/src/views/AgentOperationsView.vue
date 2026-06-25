@@ -1,0 +1,172 @@
+<script setup lang="ts">
+import { onMounted, reactive, ref } from 'vue'
+import EmptyState from '@/components/EmptyState.vue'
+import SectionPanel from '@/components/SectionPanel.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
+import {
+  createMyChildAgent,
+  listMyChildren,
+  listMyInvites,
+  listMyOrders,
+  updateMyChildRate,
+  type AgentCustomer,
+  type AgentOrder,
+  type AgentProfile
+} from '@/api/agents'
+import { formatDateTime, formatMinorMoney, formatPercent } from '@/utils/format'
+
+const loading = ref(false)
+const error = ref('')
+const invites = ref<AgentCustomer[]>([])
+const children = ref<AgentProfile[]>([])
+const orders = ref<AgentOrder[]>([])
+
+const childForm = reactive({
+  user_id: '',
+  rate_percent: ''
+})
+
+onMounted(loadAll)
+
+async function loadAll() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [invitePage, childPage, orderPage] = await Promise.all([
+      listMyInvites({ page_size: 50 }),
+      listMyChildren({ page_size: 50 }),
+      listMyOrders({ page_size: 50 })
+    ])
+    invites.value = invitePage.items ?? []
+    children.value = childPage.items ?? []
+    orders.value = orderPage.items ?? []
+  } catch (err) {
+    error.value = (err as { message?: string }).message || '加载代理经营数据失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function submitChild() {
+  await createMyChildAgent({
+    user_id: Number(childForm.user_id),
+    rate_bps: childForm.rate_percent ? Math.round(Number(childForm.rate_percent) * 100) : undefined
+  })
+  childForm.user_id = ''
+  childForm.rate_percent = ''
+  await loadAll()
+}
+
+async function saveChildRate(child: AgentProfile) {
+  await updateMyChildRate(child.id, child.rate_bps)
+  await loadAll()
+}
+</script>
+
+<template>
+  <div class="page-stack">
+    <p v-if="error" class="error-banner">{{ error }}</p>
+
+    <SectionPanel title="创建下级代理" description="只能把自己推荐码引入的用户指定为下级代理">
+      <form class="form-grid" @submit.prevent="submitChild">
+        <label>
+          <span>推荐用户 ID</span>
+          <input v-model="childForm.user_id" class="input" type="number" min="1" required />
+        </label>
+        <label>
+          <span>比例 %</span>
+          <input v-model="childForm.rate_percent" class="input" type="number" min="0" max="100" step="0.01" placeholder="默认比例" />
+        </label>
+        <button class="primary-button" type="submit">创建下级</button>
+      </form>
+    </SectionPanel>
+
+    <SectionPanel title="我的推荐用户" description="来自原系统推荐关系，可用于创建下级代理">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>推荐码</th>
+              <th>套餐</th>
+              <th>周期结束</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in invites" :key="item.user_id">
+              <td>
+                <strong>{{ item.email }}</strong>
+                <small>ID {{ item.user_id }} / {{ item.username }}</small>
+              </td>
+              <td>{{ item.source_referral_code || '-' }}</td>
+              <td>{{ item.subscription_name || '-' }}</td>
+              <td>{{ formatDateTime(item.period_end_at) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-if="!invites.length && !loading" />
+    </SectionPanel>
+
+    <SectionPanel title="我的下级代理" description="可调整直属下级比例，比例必须低于自己的比例">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>账号</th>
+              <th>等级</th>
+              <th>比例</th>
+              <th>客户</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="child in children" :key="child.id">
+              <td>
+                <strong>{{ child.email }}</strong>
+                <small>{{ child.username }}</small>
+              </td>
+              <td>{{ child.level }} 级</td>
+              <td>
+                <input v-model.number="child.rate_bps" class="table-input" type="number" min="0" step="1" :title="formatPercent(child.rate_bps)" />
+              </td>
+              <td>{{ child.customers_count }}</td>
+              <td><StatusBadge :status="child.status" /></td>
+              <td><button class="link-button" type="button" @click="saveChildRate(child)">保存比例</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-if="!children.length && !loading" />
+    </SectionPanel>
+
+    <SectionPanel title="我的客户订单" description="只读展示直接客户订单">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>订单</th>
+              <th>客户</th>
+              <th>金额</th>
+              <th>支付时间</th>
+              <th>完成时间</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="order in orders" :key="order.id">
+              <td>{{ order.order_no || `#${order.id}` }}</td>
+              <td>{{ order.customer_email }}</td>
+              <td>{{ formatMinorMoney(order.pay_amount) }}</td>
+              <td>{{ formatDateTime(order.paid_at) }}</td>
+              <td>{{ formatDateTime(order.completed_at) }}</td>
+              <td>{{ order.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-if="!orders.length && !loading" />
+    </SectionPanel>
+  </div>
+</template>

@@ -217,6 +217,17 @@ h2 {
   background: #ffffff;
   color: #496278;
   padding: 8px 12px;
+  gap: 8px;
+}
+
+.chip-action {
+  border: 0;
+  border-left: 1px solid #d9e0e8;
+  background: transparent;
+  color: #1667d9;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 0 0 8px;
 }
 
 .status-badge {
@@ -397,6 +408,11 @@ h2 {
   gap: 10px;
 }
 
+.settlement-adjust {
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .segmented {
   display: flex;
   border: 1px solid #d9e0e8;
@@ -424,6 +440,52 @@ h2 {
 .empty-state {
   margin: 14px 0 0;
   font-size: 14px;
+}
+
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: #eef2f6;
+}
+
+.login-panel {
+  width: min(420px, 100%);
+  border: 1px solid #d9e0e8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 28px;
+}
+
+.login-brand {
+  margin-bottom: 24px;
+  color: #1d2733;
+}
+
+.login-brand small {
+  color: #64748b;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.login-form label > span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.login-button {
+  width: 100%;
+  margin-top: 4px;
 }
 
 @media (max-width: 980px) {

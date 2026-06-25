@@ -6,6 +6,14 @@ services:
     image: sub2api-agent-admin:latest
     container_name: sub2api-agent-admin
     restart: unless-stopped
+    environment:
+      SUB2API_BASE_URL: http://sub2api:8080
+      DATABASE_URL: ${DATABASE_URL:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SIGNING_METHOD: ${JWT_SIGNING_METHOD:-HS256}
+      AUTH_MODE: local_jwt
+      MIGRATION_ENABLED: "true"
+      SCHEDULER_ENABLED: "true"
     ports:
       - "3100:80"
     networks:

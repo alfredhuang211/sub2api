@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
+  const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:3101'
   const devPort = Number(env.VITE_DEV_PORT || 3100)
 
   return {

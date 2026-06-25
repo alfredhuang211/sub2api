@@ -3,13 +3,14 @@ import { onMounted, ref } from 'vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SectionPanel from '@/components/SectionPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { listMySettlements, listSettlements, markSettlementPaid, type AgentSettlement } from '@/api/agents'
+import { adjustSettlement, listMySettlements, listSettlements, markSettlementPaid, type AgentSettlement, type SettlementStatus } from '@/api/agents'
 import { formatDateTime, formatMinorMoney } from '@/utils/format'
 
 const loading = ref(false)
 const error = ref('')
 const settlements = ref<AgentSettlement[]>([])
 const scope = ref<'admin' | 'agent'>('admin')
+const adjustForms = ref<Record<number, { reverse_amount: string; status: SettlementStatus; reason: string }>>({})
 
 onMounted(loadSettlements)
 
@@ -19,6 +20,13 @@ async function loadSettlements() {
   try {
     const page = scope.value === 'admin' ? await listSettlements() : await listMySettlements()
     settlements.value = page.items ?? []
+    for (const item of settlements.value) {
+      adjustForms.value[item.id] = adjustForms.value[item.id] || {
+        reverse_amount: String(item.reverse_amount / 100),
+        status: item.status,
+        reason: ''
+      }
+    }
   } catch (err) {
     error.value = (err as { message?: string }).message || '加载结算记录失败'
   } finally {
@@ -28,6 +36,18 @@ async function loadSettlements() {
 
 async function markPaid(settlement: AgentSettlement) {
   await markSettlementPaid(settlement.id)
+  await loadSettlements()
+}
+
+async function submitAdjust(settlement: AgentSettlement) {
+  const form = adjustForms.value[settlement.id]
+  if (!form?.reason.trim()) return
+  await adjustSettlement(settlement.id, {
+    reverse_amount: Math.round(Number(form.reverse_amount || 0) * 100),
+    status: form.status,
+    reason: form.reason.trim()
+  })
+  form.reason = ''
   await loadSettlements()
 }
 </script>
@@ -73,6 +93,18 @@ async function markPaid(settlement: AgentSettlement) {
                 <button v-if="scope === 'admin' && item.status === 'payable'" class="link-button" type="button" @click="markPaid(item)">
                   标记已支付
                 </button>
+                <div v-if="scope === 'admin'" class="row-actions settlement-adjust">
+                  <input v-model="adjustForms[item.id].reverse_amount" class="table-input" type="number" min="0" step="0.01" title="冲正金额" />
+                  <select v-model="adjustForms[item.id].status" class="table-input" title="状态">
+                    <option value="pending">待结算</option>
+                    <option value="frozen">冻结中</option>
+                    <option value="payable">可结算</option>
+                    <option value="paid">已结算</option>
+                    <option value="reversed">已冲正</option>
+                  </select>
+                  <input v-model="adjustForms[item.id].reason" class="input compact-input" placeholder="调整原因" />
+                  <button class="link-button" type="button" @click="submitAdjust(item)">调整</button>
+                </div>
               </td>
             </tr>
           </tbody>

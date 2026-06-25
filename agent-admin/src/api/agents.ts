@@ -56,10 +56,24 @@ export interface AgentCustomer {
   status: string
 }
 
+export interface AgentCustomerRelationChange {
+  id: number
+  customer_user_id: number
+  customer_email: string
+  from_agent_id?: number | null
+  from_agent_email?: string | null
+  to_agent_id?: number | null
+  to_agent_email?: string | null
+  reason: string
+  operator_email: string
+  effective_at: string
+  created_at: string
+}
+
 export interface AgentCommission {
   id: number
   customer_email: string
-  order_id: number
+  order_id?: number | null
   period_start_at: string
   period_end_at: string
   order_paid_amount: number
@@ -95,6 +109,16 @@ export interface AgentAuditLog {
   created_at: string
 }
 
+export interface AgentOrder {
+  id: number
+  order_no: string
+  customer_email: string
+  status: string
+  pay_amount: number
+  paid_at?: string | null
+  completed_at?: string | null
+}
+
 export interface CreateAgentRequest {
   user_id: number
   level: AgentLevel
@@ -108,9 +132,22 @@ export interface UpdateAgentRequest {
   rate_bps?: number
 }
 
+export interface ForceAdjustAgentRequest extends UpdateAgentRequest {
+  reason: string
+}
+
 export interface AssignCustomerRequest {
   customer_user_id: number
   agent_id: number
+  reason: string
+}
+
+export interface AdjustSettlementRequest {
+  amount?: number
+  reverse_amount?: number
+  net_amount?: number
+  status?: SettlementStatus
+  payment_reference?: string
   reason: string
 }
 
@@ -141,6 +178,11 @@ export async function updateAgent(id: number, payload: UpdateAgentRequest) {
   return data
 }
 
+export async function forceAdjustAgent(id: number, payload: ForceAdjustAgentRequest) {
+  const { data } = await apiClient.post<AgentProfile>(`/admin/agents/${id}/force-adjust`, payload)
+  return data
+}
+
 export async function disableAgent(id: number) {
   const { data } = await apiClient.post<AgentProfile>(`/admin/agents/${id}/disable`)
   return data
@@ -159,8 +201,31 @@ export async function listAgentCustomers(agentId: number, params: ListParams = {
   return data
 }
 
+export async function listAgentChildren(agentId: number, params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentProfile>>(
+    `/admin/agents/${agentId}/children`,
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function updateAgentCommissionRate(id: number, rate_bps: number) {
+  const { data } = await apiClient.put<AgentProfile>(`/admin/agents/${id}/commission-rate`, {
+    rate_bps
+  })
+  return data
+}
+
 export async function assignCustomer(payload: AssignCustomerRequest) {
   const { data } = await apiClient.post<AgentCustomer>('/admin/agent-customer-relations', payload)
+  return data
+}
+
+export async function listCustomerRelationChanges(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCustomerRelationChange>>(
+    '/admin/agent-customer-relations/changes',
+    { params: withDefaults(params) }
+  )
   return data
 }
 
@@ -182,6 +247,14 @@ export async function listSettlements(params: ListParams = {}) {
 
 export async function markSettlementPaid(id: number) {
   const { data } = await apiClient.post<AgentSettlement>(`/admin/agent-settlements/${id}/mark-paid`)
+  return data
+}
+
+export async function adjustSettlement(id: number, payload: AdjustSettlementRequest) {
+  const { data } = await apiClient.post<AgentSettlement>(
+    `/admin/agent-settlements/${id}/adjust`,
+    payload
+  )
   return data
 }
 
@@ -210,6 +283,32 @@ export async function listMyCustomers(params: ListParams = {}) {
   return data
 }
 
+export async function listMyInvites(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCustomer>>('/agent/invites', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function listMyChildren(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentProfile>>('/agent/children', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function createMyChildAgent(payload: { user_id: number; rate_bps?: number }) {
+  const { data } = await apiClient.post<AgentProfile>('/agent/children', payload)
+  return data
+}
+
+export async function updateMyChildRate(id: number, rate_bps: number) {
+  const { data } = await apiClient.put<AgentProfile>(`/agent/children/${id}/commission-rate`, {
+    rate_bps
+  })
+  return data
+}
+
 export async function listMyCommissions(params: ListParams = {}) {
   const { data } = await apiClient.get<PaginatedResponse<AgentCommission>>('/agent/commissions', {
     params: withDefaults(params)
@@ -226,6 +325,13 @@ export async function listMySettlements(params: ListParams = {}) {
 
 export async function getMyUpline() {
   const { data } = await apiClient.get<AgentProfile | null>('/agent/upline')
+  return data
+}
+
+export async function listMyOrders(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentOrder>>('/agent/orders', {
+    params: withDefaults(params)
+  })
   return data
 }
 

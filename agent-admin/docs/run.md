@@ -1,16 +1,17 @@
 # Agent Admin 启动运行说明
 
-本文档说明如何以开发模式、Docker 单容器和 Docker Compose 方式运行 `agent-admin`。
+本文档说明如何以开发模式、Docker 单镜像和 Docker Compose 方式运行 `agent-admin`。
 
 ## 运行前提
 
-`agent-admin` 是独立前端应用，但登录、账号和业务 API 复用 sub2api 后端：
+`agent-admin` 是独立管理平台，默认以一个容器镜像运行：
 
-- 登录账号密码与原系统一致
-- 前端请求默认走 `/api/v1`
-- 容器内 Nginx 会把 `/api/` 代理到 `http://backend:8080/api/`
+- Nginx 托管前端静态页面。
+- `agent-admin-api` 在同容器内监听 `127.0.0.1:3101`。
+- Nginx 将 `/api/` 代理到容器内 `agent-admin-api`。
+- `agent-admin-api` 通过 `SUB2API_BASE_URL` 对接同服务器或同网络内的 `sub2api`。
 
-因此运行容器时，需要保证同一 Docker 网络中存在名为 `backend` 的 sub2api 后端服务，或按实际部署修改 `nginx.conf` / 上游反向代理配置。
+登录账号密码与原系统一致。认证由 `agent-admin-api` 代理登录到 `sub2api`，JWT 按 `sub2api` 规则本地验签。
 
 ## 开发模式运行
 
@@ -30,18 +31,25 @@ http://localhost:3100
 默认开发代理目标：
 
 ```text
-http://localhost:8080
+http://localhost:3101
 ```
 
 可通过环境变量调整：
 
 ```bash
 VITE_DEV_PORT=3100 \
-VITE_DEV_PROXY_TARGET=http://localhost:8080 \
+VITE_DEV_PROXY_TARGET=http://localhost:3101 \
 pnpm dev
 ```
 
-## Docker 单容器运行
+开发模式下可单独启动 API：
+
+```bash
+cd agent-admin/api
+go run ./cmd/server
+```
+
+## Docker 单镜像运行
 
 先构建镜像：
 
@@ -52,7 +60,7 @@ docker build \
   agent-admin
 ```
 
-确保后端容器和 agent-admin 在同一个 Docker 网络中。示例网络名：
+确保 `sub2api` 和 agent-admin 在同一个 Docker 网络中。示例网络名：
 
 ```bash
 docker network create sub2api
@@ -66,6 +74,10 @@ docker run -d \
   --restart unless-stopped \
   --network sub2api \
   -p 3100:80 \
+  -e SUB2API_BASE_URL=http://sub2api:8080 \
+  -e DATABASE_URL="${DATABASE_URL}" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_SIGNING_METHOD=HS256 \
   sub2api-agent-admin:latest
 ```
 
@@ -130,6 +142,10 @@ docker run -d \
   --restart unless-stopped \
   --network sub2api \
   -p 3100:80 \
+  -e SUB2API_BASE_URL=http://sub2api:8080 \
+  -e DATABASE_URL="${DATABASE_URL}" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_SIGNING_METHOD=HS256 \
   ghcr.io/<owner>/sub2api-agent-admin:latest
 ```
 
@@ -145,15 +161,17 @@ echo "<github_token>" | docker login ghcr.io -u <github_username> --password-std
 
 ```nginx
 location /api/ {
-  proxy_pass http://backend:8080/api/;
+  proxy_pass http://127.0.0.1:3101/api/;
 }
 ```
 
-部署时有三种常见方式：
+`agent-admin-api` 再通过环境变量连接 `sub2api`：
 
-- 后端服务容器名为 `backend`，并与 agent-admin 同网络
-- 修改 `agent-admin/nginx.conf` 后重新打包镜像
-- 在外层网关，例如 Nginx、Traefik、Cloudflare Tunnel，中统一代理 `/api/` 到后端
+```text
+SUB2API_BASE_URL=http://sub2api:8080
+```
+
+如果 `sub2api` 容器名或端口不同，调整 `SUB2API_BASE_URL` 即可，通常不需要修改 `nginx.conf`。
 
 如果使用独立域名部署，需要确保浏览器能访问：
 
@@ -218,6 +236,6 @@ curl -I http://localhost:3100/api/v1/health
 如果页面可以打开但接口失败，优先检查：
 
 - 后端服务是否运行
-- agent-admin 和后端是否在同一个 Docker 网络
-- 后端容器名是否为 `backend`
+- agent-admin 和 sub2api 是否在同一个 Docker 网络
+- `SUB2API_BASE_URL` 是否能从 agent-admin 容器内访问
 - 外层网关是否正确转发 `/api/`

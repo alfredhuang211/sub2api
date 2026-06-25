@@ -55,16 +55,6 @@ func RegisterUserRoutes(
 			}
 		}
 
-		agent := authenticated.Group("/agent")
-		{
-			agent.GET("/profile", h.Agent.Profile)
-			agent.GET("/dashboard", h.Agent.Dashboard)
-			agent.GET("/customers", h.Agent.Customers)
-			agent.GET("/commissions", h.Agent.Commissions)
-			agent.GET("/settlements", h.Agent.Settlements)
-			agent.GET("/upline", h.Agent.Upline)
-		}
-
 		// API Key管理
 		keys := authenticated.Group("/keys")
 		{

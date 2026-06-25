@@ -5,6 +5,7 @@ defineProps<{
 
 const labels: Record<string, string> = {
   active: '启用',
+  scheduled: '待生效',
   disabled: '禁用',
   pending: '待结算',
   frozen: '冻结中',

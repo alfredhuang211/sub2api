@@ -6,6 +6,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import {
   createAgent,
   disableAgent,
+  forceAdjustAgent,
   listAgents,
   restoreAgent,
   updateAgent,
@@ -25,6 +26,8 @@ const form = reactive({
   parent_agent_id: '',
   rate_percent: ''
 })
+
+const forceReasons = reactive<Record<number, string>>({})
 
 onMounted(loadAgents)
 
@@ -56,7 +59,13 @@ async function submitAgent() {
 }
 
 async function saveRate(agent: AgentProfile) {
-  await updateAgent(agent.id, { rate_bps: agent.rate_bps })
+  const reason = forceReasons[agent.id]?.trim()
+  if (reason) {
+    await forceAdjustAgent(agent.id, { rate_bps: agent.rate_bps, reason })
+    forceReasons[agent.id] = ''
+  } else {
+    await updateAgent(agent.id, { rate_bps: agent.rate_bps })
+  }
   await loadAgents()
 }
 
@@ -119,6 +128,7 @@ async function toggleAgent(agent: AgentProfile) {
               <th>客户</th>
               <th>可结算</th>
               <th>状态</th>
+              <th>强制调整原因</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -143,6 +153,9 @@ async function toggleAgent(agent: AgentProfile) {
               <td>{{ agent.customers_count }}</td>
               <td>{{ formatMinorMoney(agent.payable_amount) }}</td>
               <td><StatusBadge :status="agent.status" /></td>
+              <td>
+                <input v-model="forceReasons[agent.id]" class="input compact-input" placeholder="填写后按强制调整审计" />
+              </td>
               <td class="row-actions">
                 <button class="link-button" type="button" @click="saveRate(agent)">保存比例</button>
                 <button class="link-button" type="button" @click="toggleAgent(agent)">

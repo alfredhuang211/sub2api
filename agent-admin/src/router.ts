@@ -5,18 +5,33 @@ import CustomersView from './views/CustomersView.vue'
 import CommissionsView from './views/CommissionsView.vue'
 import SettlementsView from './views/SettlementsView.vue'
 import AuditLogsView from './views/AuditLogsView.vue'
+import LoginView from './views/LoginView.vue'
+import AgentOperationsView from './views/AgentOperationsView.vue'
+import { hasAuthToken } from './api/auth'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/dashboard' },
+    { path: '/login', component: LoginView, meta: { title: '登录', public: true } },
     { path: '/dashboard', component: DashboardView, meta: { title: '工作台' } },
     { path: '/agents', component: AgentsView, meta: { title: '代理管理' } },
+    { path: '/agent-operations', component: AgentOperationsView, meta: { title: '代理经营' } },
     { path: '/customers', component: CustomersView, meta: { title: '客户归属' } },
     { path: '/commissions', component: CommissionsView, meta: { title: '分成记录' } },
     { path: '/settlements', component: SettlementsView, meta: { title: '结算记录' } },
     { path: '/audit-logs', component: AuditLogsView, meta: { title: '审计日志' } }
   ]
+})
+
+router.beforeEach((to) => {
+  if (!to.meta.public && !hasAuthToken()) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  if (to.path === '/login' && hasAuthToken()) {
+    return { path: '/dashboard' }
+  }
+  return true
 })
 
 router.afterEach((to) => {
