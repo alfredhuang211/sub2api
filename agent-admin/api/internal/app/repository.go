@@ -30,7 +30,7 @@ WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
 }
 
 func (r *Repository) GetAgentByUserID(ctx context.Context, userID int64) (*AgentProfile, error) {
-	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.user_id = $1`, userID)
+	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.user_id = $1 AND u.deleted_at IS NULL`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func (r *Repository) GetAgentByUserID(ctx context.Context, userID int64) (*Agent
 }
 
 func (r *Repository) GetAgentByID(ctx context.Context, id int64) (*AgentProfile, error) {
-	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.id = $1`, id)
+	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.id = $1 AND u.deleted_at IS NULL`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -52,23 +52,40 @@ func (r *Repository) AdminSummary(ctx context.Context) (AgentSummary, error) {
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   COUNT(*)::bigint,
-  COUNT(*) FILTER (WHERE status = 'active')::bigint,
-  COUNT(*) FILTER (WHERE status = 'disabled')::bigint
-FROM agent_profiles`).Scan(&out.TotalAgents, &out.ActiveAgents, &out.DisabledAgents)
+  COUNT(*) FILTER (WHERE ap.status = 'active')::bigint,
+  COUNT(*) FILTER (WHERE ap.status = 'disabled')::bigint
+FROM agent_profiles ap
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL`).Scan(&out.TotalAgents, &out.ActiveAgents, &out.DisabledAgents)
 	if err != nil {
 		return out, err
 	}
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*)::bigint FROM agent_customer_relations WHERE status = 'active'`).Scan(&out.DirectCustomers)
+	_ = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::bigint
+FROM agent_customer_relations acr
+JOIN users u ON u.id = acr.customer_user_id AND u.deleted_at IS NULL
+WHERE acr.status = 'active'`).Scan(&out.DirectCustomers)
 	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(confirmed_revenue),0)::bigint, COALESCE(SUM(commission_amount),0)::bigint, COALESCE(SUM(reverse_amount),0)::bigint FROM agent_commission_periods`).Scan(&out.ConfirmedRevenue, &out.CommissionAmount, &out.ReversedAmount)
 	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(net_amount),0)::bigint FROM agent_settlements WHERE status IN ('payable','pending')`).Scan(&out.PayableAmount)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*)::bigint FROM agent_profiles WHERE parent_agent_id IS NOT NULL`).Scan(&out.ChildAgents)
+	_ = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::bigint
+FROM agent_profiles ap
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL
+WHERE ap.parent_agent_id IS NOT NULL`).Scan(&out.ChildAgents)
 	return out, nil
 }
 
 func (r *Repository) AgentSummary(ctx context.Context, agentID int64) (AgentSummary, error) {
 	var out AgentSummary
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*)::bigint FROM agent_customer_relations WHERE status = 'active' AND agent_id = $1`, agentID).Scan(&out.DirectCustomers)
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*)::bigint FROM agent_profiles WHERE parent_agent_id = $1`, agentID).Scan(&out.ChildAgents)
+	_ = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::bigint
+FROM agent_customer_relations acr
+JOIN users u ON u.id = acr.customer_user_id AND u.deleted_at IS NULL
+WHERE acr.status = 'active' AND acr.agent_id = $1`, agentID).Scan(&out.DirectCustomers)
+	_ = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::bigint
+FROM agent_profiles ap
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL
+WHERE ap.parent_agent_id = $1`, agentID).Scan(&out.ChildAgents)
 	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(confirmed_revenue),0)::bigint, COALESCE(SUM(commission_amount),0)::bigint, COALESCE(SUM(reverse_amount),0)::bigint FROM agent_commission_periods WHERE agent_id = $1`, agentID).Scan(&out.ConfirmedRevenue, &out.CommissionAmount, &out.ReversedAmount)
 	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(net_amount),0)::bigint FROM agent_settlements WHERE agent_id = $1 AND status IN ('payable','pending')`, agentID).Scan(&out.PayableAmount)
 	out.TotalAgents = 1
@@ -101,15 +118,20 @@ type CreateAgentInput struct {
 }
 
 func (r *Repository) CreateAgent(ctx context.Context, in CreateAgentInput) (*AgentProfile, error) {
-	if err := r.validateAgentInput(ctx, in.Level, in.ParentAgentID, in.RateBPS); err != nil {
+	rate := defaultRateBPS(in.Level)
+	if in.RateBPS != nil {
+		rate = *in.RateBPS
+	}
+	if err := r.validateAgentInput(ctx, in.Level, in.ParentAgentID, &rate); err != nil {
 		return nil, err
 	}
 	if _, err := r.GetUserByID(ctx, in.UserID); err != nil {
 		return nil, fmt.Errorf("user not found")
 	}
-	rate := defaultRateBPS(in.Level)
-	if in.RateBPS != nil {
-		rate = *in.RateBPS
+	if _, err := r.GetAgentByUserID(ctx, in.UserID); err == nil {
+		return nil, fmt.Errorf("user is already an agent")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -164,7 +186,23 @@ func (r *Repository) UpdateAgent(ctx context.Context, id int64, in UpdateAgentIn
 	if level == 1 {
 		parentID = nil
 	}
-	if err := r.validateAgentInput(ctx, level, parentID, in.RateBPS); err != nil {
+	if parentID != nil && *parentID == id {
+		return nil, fmt.Errorf("agent cannot be its own parent")
+	}
+	if parentID != nil {
+		descendant, err := r.isDescendantAgent(ctx, *parentID, id)
+		if err != nil {
+			return nil, err
+		}
+		if descendant {
+			return nil, fmt.Errorf("agent parent cannot be a descendant")
+		}
+	}
+	rate := current.RateBPS
+	if in.RateBPS != nil {
+		rate = *in.RateBPS
+	}
+	if err := r.validateAgentInput(ctx, level, parentID, &rate); err != nil {
 		return nil, err
 	}
 
@@ -324,7 +362,7 @@ WHERE acr.id = due.id`); err != nil {
 }
 
 func (r *Repository) ListCustomers(ctx context.Context, filter ListFilter) ([]AgentCustomer, int64, error) {
-	where := ` WHERE acr.status IN ('active', 'scheduled')`
+	where := ` WHERE acr.status IN ('active', 'scheduled') AND u.deleted_at IS NULL`
 	args := []any{}
 	if filter.AgentID != nil {
 		args = append(args, *filter.AgentID)
@@ -360,7 +398,7 @@ func (r *Repository) ListCustomerRelationChanges(ctx context.Context, filter Lis
 	if err := r.db.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM agent_customer_relation_changes c
-JOIN users customer ON customer.id = c.customer_user_id
+JOIN users customer ON customer.id = c.customer_user_id AND customer.deleted_at IS NULL
 LEFT JOIN users operator ON operator.id = c.operator_user_id
 `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -373,7 +411,7 @@ SELECT c.id, c.customer_user_id, customer.email,
        c.to_agent_id, to_user.email,
        c.reason, COALESCE(operator.email,''), c.effective_at, c.created_at
 FROM agent_customer_relation_changes c
-JOIN users customer ON customer.id = c.customer_user_id
+JOIN users customer ON customer.id = c.customer_user_id AND customer.deleted_at IS NULL
 LEFT JOIN agent_profiles from_agent ON from_agent.id = c.from_agent_id
 LEFT JOIN users from_user ON from_user.id = from_agent.user_id
 LEFT JOIN agent_profiles to_agent ON to_agent.id = c.to_agent_id
@@ -411,7 +449,7 @@ LEFT JOIN users operator ON operator.id = c.operator_user_id
 }
 
 func (r *Repository) GetCustomerRelation(ctx context.Context, id int64) (*AgentCustomer, error) {
-	rows, err := r.db.QueryContext(ctx, customerSelectSQL()+` WHERE acr.id=$1`, id)
+	rows, err := r.db.QueryContext(ctx, customerSelectSQL()+` WHERE acr.id=$1 AND u.deleted_at IS NULL`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -466,17 +504,16 @@ LEFT JOIN users u ON u.id = acp.customer_user_id
 func (r *Repository) ListSettlements(ctx context.Context, filter ListFilter) ([]AgentSettlement, int64, error) {
 	where, args := buildAgentIDWhere("s.agent_id", filter.AgentID)
 	var total int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_settlements s `+where, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM agent_settlements s
+JOIN agent_profiles ap ON ap.id = s.agent_id
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL
+`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, filter.Limit(), filter.Offset())
-	rows, err := r.db.QueryContext(ctx, `
-SELECT s.id, s.agent_id, u.email, to_char(s.period_month, 'YYYY-MM'), s.amount, s.reverse_amount,
-       s.net_amount, s.status, s.frozen_until, s.paid_at
-FROM agent_settlements s
-JOIN agent_profiles ap ON ap.id = s.agent_id
-JOIN users u ON u.id = ap.user_id
-`+where+` ORDER BY s.period_month DESC, s.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	rows, err := r.db.QueryContext(ctx, settlementSelectSQL()+where+` ORDER BY s.period_month DESC, s.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -615,7 +652,7 @@ func (r *Repository) ListChildren(ctx context.Context, parentAgentID int64, filt
 }
 
 func (r *Repository) ListInvites(ctx context.Context, inviterUserID int64, filter ListFilter) ([]AgentCustomer, int64, error) {
-	where := ` WHERE ua.inviter_id = $1`
+	where := ` WHERE ua.inviter_id = $1 AND u.deleted_at IS NULL`
 	args := []any{inviterUserID}
 	if strings.TrimSpace(filter.Search) != "" {
 		args = append(args, "%"+strings.TrimSpace(filter.Search)+"%")
@@ -631,8 +668,8 @@ SELECT 0::bigint, u.id, u.email, COALESCE(u.username,''), 'referral'::text,
        inviter_aff.aff_code, ap.id, COALESCE(inviter.email,''), sub_group.name, sub.expires_at,
        0::bigint, 'active'::text
 FROM user_affiliates ua
-JOIN users u ON u.id = ua.user_id
-JOIN users inviter ON inviter.id = ua.inviter_id
+JOIN users u ON u.id = ua.user_id AND u.deleted_at IS NULL
+JOIN users inviter ON inviter.id = ua.inviter_id AND inviter.deleted_at IS NULL
 JOIN agent_profiles ap ON ap.user_id = ua.inviter_id
 LEFT JOIN user_affiliates inviter_aff ON inviter_aff.user_id = ua.inviter_id
 LEFT JOIN LATERAL (
@@ -642,7 +679,7 @@ LEFT JOIN LATERAL (
     ORDER BY us.expires_at DESC
     LIMIT 1
 ) sub ON true
-LEFT JOIN groups sub_group ON sub_group.id = sub.group_id
+LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_at IS NULL
 `+where+` ORDER BY ua.created_at DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, 0, err
@@ -686,7 +723,7 @@ func (r *Repository) UpdateChildRate(ctx context.Context, parent AgentProfile, c
 }
 
 func (r *Repository) ListOrders(ctx context.Context, agentID int64, filter ListFilter) ([]AgentOrder, int64, error) {
-	where := ` WHERE acr.status = 'active' AND acr.agent_id = $1`
+	where := ` WHERE acr.status = 'active' AND acr.agent_id = $1 AND u.deleted_at IS NULL`
 	args := []any{agentID}
 	if strings.TrimSpace(filter.Search) != "" {
 		args = append(args, "%"+strings.TrimSpace(filter.Search)+"%")
@@ -800,6 +837,24 @@ func (r *Repository) validateAgentInput(ctx context.Context, level int, parentAg
 	return nil
 }
 
+func (r *Repository) isDescendantAgent(ctx context.Context, candidateID int64, ancestorID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+WITH RECURSIVE descendants AS (
+    SELECT id
+    FROM agent_profiles
+    WHERE parent_agent_id = $1
+
+    UNION ALL
+
+    SELECT child.id
+    FROM agent_profiles child
+    JOIN descendants d ON child.parent_agent_id = d.id
+)
+SELECT EXISTS (SELECT 1 FROM descendants WHERE id = $2)`, ancestorID, candidateID).Scan(&exists)
+	return exists, err
+}
+
 func insertAudit(ctx context.Context, exec interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, operatorID int64, role, action, targetType string, targetID int64, before, after any, reason *string) error {
@@ -840,13 +895,13 @@ func defaultRateBPS(level int) int {
 func buildAgentWhere(search string) (string, []any) {
 	search = strings.TrimSpace(search)
 	if search == "" {
-		return "", nil
+		return " WHERE u.deleted_at IS NULL", nil
 	}
-	return " WHERE u.email ILIKE $1 OR u.username ILIKE $1", []any{"%" + search + "%"}
+	return " WHERE u.deleted_at IS NULL AND (u.email ILIKE $1 OR u.username ILIKE $1)", []any{"%" + search + "%"}
 }
 
 func buildChildAgentWhere(parentAgentID int64, search string) (string, []any) {
-	where := " WHERE ap.parent_agent_id = $1"
+	where := " WHERE ap.parent_agent_id = $1 AND u.deleted_at IS NULL"
 	args := []any{parentAgentID}
 	search = strings.TrimSpace(search)
 	if search != "" {
@@ -869,7 +924,7 @@ SELECT s.id, s.agent_id, u.email, to_char(s.period_month, 'YYYY-MM'), s.amount, 
        s.net_amount, s.status, s.frozen_until, s.paid_at
 FROM agent_settlements s
 JOIN agent_profiles ap ON ap.id = s.agent_id
-JOIN users u ON u.id = ap.user_id`
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL`
 }
 
 func scanSettlements(rows *sql.Rows) ([]AgentSettlement, error) {
@@ -903,13 +958,21 @@ SELECT ap.id, ap.user_id, COALESCE(u.username,''), u.email, ap.level, ap.parent_
 FROM agent_profiles ap
 JOIN users u ON u.id = ap.user_id
 LEFT JOIN agent_profiles parent ON parent.id = ap.parent_agent_id
-LEFT JOIN users parent_user ON parent_user.id = parent.user_id
+LEFT JOIN users parent_user ON parent_user.id = parent.user_id AND parent_user.deleted_at IS NULL
 LEFT JOIN agent_commission_rates rate ON rate.agent_id = ap.id AND rate.expired_at IS NULL
 LEFT JOIN (
-    SELECT parent_agent_id, COUNT(*) AS children_count FROM agent_profiles WHERE parent_agent_id IS NOT NULL GROUP BY parent_agent_id
+    SELECT child.parent_agent_id, COUNT(*) AS children_count
+    FROM agent_profiles child
+    JOIN users child_user ON child_user.id = child.user_id AND child_user.deleted_at IS NULL
+    WHERE child.parent_agent_id IS NOT NULL
+    GROUP BY child.parent_agent_id
 ) children ON children.parent_agent_id = ap.id
 LEFT JOIN (
-    SELECT agent_id, COUNT(*) AS customers_count FROM agent_customer_relations WHERE status='active' GROUP BY agent_id
+    SELECT acr.agent_id, COUNT(*) AS customers_count
+    FROM agent_customer_relations acr
+    JOIN users customer ON customer.id = acr.customer_user_id AND customer.deleted_at IS NULL
+    WHERE acr.status='active'
+    GROUP BY acr.agent_id
 ) customers ON customers.agent_id = ap.id
 LEFT JOIN (
     SELECT agent_id, SUM(net_amount) AS payable_amount FROM agent_settlements WHERE status IN ('payable','pending') GROUP BY agent_id
@@ -965,7 +1028,7 @@ SELECT acr.id, u.id, u.email, COALESCE(u.username,''), acr.source, acr.source_re
 FROM agent_customer_relations acr
 JOIN users u ON u.id = acr.customer_user_id
 JOIN agent_profiles ap ON ap.id = acr.agent_id
-JOIN users agent_user ON agent_user.id = ap.user_id
+JOIN users agent_user ON agent_user.id = ap.user_id AND agent_user.deleted_at IS NULL
 LEFT JOIN LATERAL (
     SELECT us.expires_at, us.group_id
     FROM user_subscriptions us
@@ -973,7 +1036,7 @@ LEFT JOIN LATERAL (
     ORDER BY us.expires_at DESC
     LIMIT 1
 ) sub ON true
-LEFT JOIN groups sub_group ON sub_group.id = sub.group_id
+LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_at IS NULL
 LEFT JOIN (
     SELECT customer_user_id, agent_id, SUM(confirmed_revenue) AS confirmed_revenue
     FROM agent_commission_periods

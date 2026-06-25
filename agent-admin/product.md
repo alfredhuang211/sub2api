@@ -278,9 +278,10 @@
 当前 P0 实现：
 
 - `agent-admin-api` 启动后和每日定时执行佣金生成。
-- 只处理 `payment_orders.order_type = subscription` 且状态为 `PAID` 或 `COMPLETED` 的套餐订单。
+- 只处理 `payment_orders.order_type = subscription` 且状态为 `COMPLETED` 的套餐订单。
 - 周期收入按 `(pay_amount - refund_amount) * 100` 转为分；负数按 0 处理。
-- 订单需能匹配同用户、同套餐组、已到期的 `user_subscriptions` 周期。
+- 原 `user_subscriptions` 是当前订阅状态表，续费会更新同一行，不适合作为订单周期历史。
+- P0 使用 `payment_orders.completed_at` 作为订单周期开始时间，使用 `payment_orders.subscription_days` 推导订单周期结束时间。
 - 使用 `agent_customer_relations.effective_at <= period_start_at` 的归属作为周期归属。
 - 按代理链路和当期比例生成差额分成，并通过唯一索引保证同一订单同一代理不会重复生成。
 - 结算后退款和支付争议形成负数冲正的自动写入入口仍需后续增强；管理员可通过结算调整入口手动处理。

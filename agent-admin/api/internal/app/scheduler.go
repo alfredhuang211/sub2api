@@ -80,6 +80,8 @@ SELECT
     ap.user_id
 FROM user_affiliates ua
 JOIN agent_profiles ap ON ap.user_id = ua.inviter_id
+JOIN users invitee ON invitee.id = ua.user_id AND invitee.deleted_at IS NULL
+JOIN users inviter ON inviter.id = ua.inviter_id AND inviter.deleted_at IS NULL
 LEFT JOIN user_affiliates inviter_aff ON inviter_aff.user_id = ua.inviter_id
 WHERE ua.inviter_id IS NOT NULL
   AND ap.status = 'active'
@@ -106,23 +108,29 @@ WITH RECURSIVE eligible_orders AS (
     SELECT
         po.id AS order_id,
         po.user_id AS customer_user_id,
-        us.id AS subscription_id,
-        us.starts_at AS period_start_at,
-        us.expires_at AS period_end_at,
+        sub.id AS subscription_id,
+        po.completed_at AS period_start_at,
+        po.completed_at + (po.subscription_days::int * INTERVAL '1 day') AS period_end_at,
         ROUND(GREATEST(COALESCE(po.pay_amount, po.amount, 0) - COALESCE(po.refund_amount, 0), 0) * 100)::bigint AS confirmed_revenue
     FROM payment_orders po
-    JOIN user_subscriptions us
-      ON us.user_id = po.user_id
-     AND us.group_id = po.subscription_group_id
-     AND us.deleted_at IS NULL
+    JOIN users customer ON customer.id = po.user_id AND customer.deleted_at IS NULL
+    LEFT JOIN LATERAL (
+        SELECT us.id
+        FROM user_subscriptions us
+        WHERE us.user_id = po.user_id
+          AND us.group_id = po.subscription_group_id
+          AND us.deleted_at IS NULL
+        ORDER BY us.updated_at DESC, us.id DESC
+        LIMIT 1
+    ) sub ON true
     WHERE po.order_type = 'subscription'
-      AND po.status IN ('PAID', 'COMPLETED')
+      AND po.status = 'COMPLETED'
       AND po.subscription_group_id IS NOT NULL
+      AND po.subscription_days IS NOT NULL
+      AND po.subscription_days > 0
       AND po.paid_at IS NOT NULL
-      AND us.expires_at <= NOW()
-      AND COALESCE(po.completed_at, po.paid_at) <= us.expires_at
-      AND po.paid_at >= us.starts_at
-      AND po.paid_at <= us.expires_at
+      AND po.completed_at IS NOT NULL
+      AND po.completed_at + (po.subscription_days::int * INTERVAL '1 day') <= NOW()
 ),
 base_relations AS (
     SELECT DISTINCT ON (eo.order_id)
@@ -148,6 +156,7 @@ chain AS (
         ap.level
     FROM base_relations br
     JOIN agent_profiles ap ON ap.id = br.direct_agent_id
+    JOIN users agent_user ON agent_user.id = ap.user_id AND agent_user.deleted_at IS NULL
     WHERE ap.status = 'active'
 
     UNION ALL
@@ -165,6 +174,7 @@ chain AS (
         parent.level
     FROM chain c
     JOIN agent_profiles parent ON parent.id = c.parent_agent_id
+    JOIN users parent_user ON parent_user.id = parent.user_id AND parent_user.deleted_at IS NULL
     WHERE parent.status = 'active'
 ),
 rated AS (
@@ -186,7 +196,7 @@ rated AS (
         SELECT rate_bps
         FROM agent_commission_rates r
         WHERE r.agent_id = (
-            SELECT child.id
+            SELECT child.agent_id
             FROM chain child
             WHERE child.order_id = c.order_id
               AND child.parent_agent_id = c.agent_id
@@ -292,7 +302,7 @@ SET amount = EXCLUDED.amount,
     reverse_amount = EXCLUDED.reverse_amount,
     net_amount = EXCLUDED.net_amount,
     status = CASE
-      WHEN agent_settlements.status = 'paid' THEN agent_settlements.status
+      WHEN agent_settlements.status IN ('paid', 'reversed') THEN agent_settlements.status
       ELSE EXCLUDED.status
     END,
     min_amount_met = EXCLUDED.min_amount_met,

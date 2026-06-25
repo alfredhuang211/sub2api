@@ -128,13 +128,21 @@ GitHub Actions 推送后的镜像地址格式：
 ghcr.io/<owner>/sub2api-agent-admin:<tag>
 ```
 
+当前项目镜像地址：
+
+```text
+ghcr.io/alfredhuang211/sub2api-agent-admin:latest
+```
+
 拉取示例：
 
 ```bash
-docker pull ghcr.io/<owner>/sub2api-agent-admin:latest
+docker pull ghcr.io/alfredhuang211/sub2api-agent-admin:latest
 ```
 
-运行示例：
+### sub2api 也在 Docker 网络内
+
+如果 `sub2api` 也是 Docker 容器，并且容器名是 `sub2api`、服务端口是 `8080`：
 
 ```bash
 docker run -d \
@@ -146,7 +154,73 @@ docker run -d \
   -e DATABASE_URL="${DATABASE_URL}" \
   -e JWT_SECRET="${JWT_SECRET}" \
   -e JWT_SIGNING_METHOD=HS256 \
-  ghcr.io/<owner>/sub2api-agent-admin:latest
+  -e MIGRATION_ENABLED=true \
+  -e SCHEDULER_ENABLED=true \
+  ghcr.io/alfredhuang211/sub2api-agent-admin:latest
+```
+
+### 对接当前 sub2api docker-compose.local.yml
+
+如果 `sub2api` 使用项目中的 `docker-compose.local.yml` 运行，并且检查网络命令返回：
+
+```text
+sub2api_sub2api-network
+```
+
+可以在 `sub2api` 的部署目录执行：
+
+```bash
+set -a
+source .env
+set +a
+```
+
+然后启动 agent-admin：
+
+```bash
+docker run -d \
+  --name sub2api-agent-admin \
+  --restart unless-stopped \
+  --network sub2api_sub2api-network \
+  -p 3100:80 \
+  -e SUB2API_BASE_URL=http://sub2api:8080 \
+  -e DATABASE_URL="postgres://${POSTGRES_USER:-sub2api}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sub2api}?sslmode=disable" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_SIGNING_METHOD=HS256 \
+  -e MIGRATION_ENABLED=true \
+  -e SCHEDULER_ENABLED=true \
+  ghcr.io/alfredhuang211/sub2api-agent-admin:latest
+```
+
+访问地址：
+
+```text
+http://<服务器IP>:3100
+```
+
+这个场景下：
+
+- `SUB2API_BASE_URL=http://sub2api:8080` 使用 compose 内部的 `sub2api` 服务名。
+- `DATABASE_URL` 使用 compose 内部的 `postgres` 服务名，不需要把 PostgreSQL 端口暴露到宿主机。
+- `JWT_SECRET` 必须和 `sub2api` 使用同一个固定值，不能留空；如果当前 `.env` 里为空，先设置固定值并重启 `sub2api`。
+
+### sub2api 运行在宿主机
+
+如果 `sub2api` 直接运行在服务器宿主机的 `8080` 端口：
+
+```bash
+docker run -d \
+  --name sub2api-agent-admin \
+  --restart unless-stopped \
+  --add-host=host.docker.internal:host-gateway \
+  -p 3100:80 \
+  -e SUB2API_BASE_URL=http://host.docker.internal:8080 \
+  -e DATABASE_URL="${DATABASE_URL}" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_SIGNING_METHOD=HS256 \
+  -e MIGRATION_ENABLED=true \
+  -e SCHEDULER_ENABLED=true \
+  ghcr.io/alfredhuang211/sub2api-agent-admin:latest
 ```
 
 如果 GHCR package 是私有的，需要先登录：
@@ -184,7 +258,7 @@ https://<agent-admin-domain>/api/v1/...
 拉取新镜像：
 
 ```bash
-docker pull ghcr.io/<owner>/sub2api-agent-admin:latest
+docker pull ghcr.io/alfredhuang211/sub2api-agent-admin:latest
 ```
 
 重启容器：
@@ -197,7 +271,7 @@ docker run -d \
   --restart unless-stopped \
   --network sub2api \
   -p 3100:80 \
-  ghcr.io/<owner>/sub2api-agent-admin:latest
+  ghcr.io/alfredhuang211/sub2api-agent-admin:latest
 ```
 
 使用 Compose 时：

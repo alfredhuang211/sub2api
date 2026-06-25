@@ -479,11 +479,13 @@ payment_audit_logs
 
 P0 SQL 策略：
 
-- 读取 `payment_orders`、`user_subscriptions`、`agent_customer_relations`、`agent_profiles`、`agent_commission_rates`。
+- 读取 `payment_orders`、`agent_customer_relations`、`agent_profiles`、`agent_commission_rates`；`user_subscriptions` 仅作为可选关联记录展示，不作为订单周期历史来源。
 - 仅处理订阅订单：`payment_orders.order_type = 'subscription'`。
-- 仅处理已支付或已完成订单：`status IN ('PAID', 'COMPLETED')`。
+- 仅处理已完成订单：`payment_orders.status = 'COMPLETED'`。
+- 周期开始：`payment_orders.completed_at`。
+- 周期结束：`payment_orders.completed_at + payment_orders.subscription_days`。
 - 周期确认收入：`ROUND(GREATEST(pay_amount - refund_amount, 0) * 100)`。
-- 周期归属：选择 `effective_at <= user_subscriptions.starts_at` 的 active 归属。
+- 周期归属：选择 `effective_at <= period_start_at` 的 active 归属。
 - 代理链路：从直属代理向上递归到 1 级代理。
 - 差额分成：当前代理比例减去直接下级比例，负数按 0。
 - 幂等约束：`agent_commission_periods(order_id, agent_id)` 唯一。
@@ -492,7 +494,7 @@ P0 SQL 策略：
 
 - 已结算后的退款自动冲正入口暂未完成。
 - 支付争议自动同步入口暂未完成。
-- 历史订单与订阅周期存在多订单、多次续费或特殊补单时，可能需要继续按真实业务数据细化匹配规则。
+- 由于原 `user_subscriptions` 不是周期历史表，多次续费、提前续费或特殊补单场景如需完全精确，需要 agent-admin 后续增加订单周期快照表或结算快照。
 
 ### 月底结算
 
