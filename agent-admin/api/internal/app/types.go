@@ -20,6 +20,17 @@ type UserOption struct {
 	Status   string `json:"status"`
 }
 
+type CurrentUser struct {
+	ID       int64         `json:"id"`
+	Email    string        `json:"email"`
+	Username string        `json:"username"`
+	Role     string        `json:"role"`
+	Status   string        `json:"status"`
+	IsAdmin  bool          `json:"is_admin"`
+	IsAgent  bool          `json:"is_agent"`
+	Agent    *AgentProfile `json:"agent,omitempty"`
+}
+
 type AgentProfile struct {
 	ID             int64      `json:"id"`
 	UserID         int64      `json:"user_id"`

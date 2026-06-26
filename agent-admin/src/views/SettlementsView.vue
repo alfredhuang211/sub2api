@@ -4,15 +4,24 @@ import EmptyState from '@/components/EmptyState.vue'
 import SectionPanel from '@/components/SectionPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { adjustSettlement, listMySettlements, listSettlements, markSettlementPaid, type AgentSettlement, type SettlementStatus } from '@/api/agents'
+import { getCurrentUser } from '@/api/session'
 import { formatDateTime, formatMinorMoney } from '@/utils/format'
 
 const loading = ref(false)
 const error = ref('')
 const settlements = ref<AgentSettlement[]>([])
 const scope = ref<'admin' | 'agent'>('admin')
+const isAdmin = ref(false)
+const isAgent = ref(false)
 const adjustForms = ref<Record<number, { reverse_amount: string; status: SettlementStatus; reason: string }>>({})
 
-onMounted(loadSettlements)
+onMounted(async () => {
+  const user = await getCurrentUser()
+  isAdmin.value = user.is_admin
+  isAgent.value = user.is_agent
+  scope.value = user.is_admin ? 'admin' : 'agent'
+  await loadSettlements()
+})
 
 async function loadSettlements() {
   loading.value = true
@@ -58,7 +67,7 @@ async function submitAdjust(settlement: AgentSettlement) {
 
     <SectionPanel title="结算记录" description="最低 100 元，冻结 5 天，自然月月底结算">
       <template #actions>
-        <div class="segmented">
+        <div v-if="isAdmin && isAgent" class="segmented">
           <button type="button" :class="{ active: scope === 'admin' }" @click="scope = 'admin'; loadSettlements()">管理员</button>
           <button type="button" :class="{ active: scope === 'agent' }" @click="scope = 'agent'; loadSettlements()">代理商</button>
         </div>

@@ -4,14 +4,23 @@ import EmptyState from '@/components/EmptyState.vue'
 import SectionPanel from '@/components/SectionPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { listCommissions, listMyCommissions, type AgentCommission } from '@/api/agents'
+import { getCurrentUser } from '@/api/session'
 import { formatDateTime, formatMinorMoney, formatPercent } from '@/utils/format'
 
 const loading = ref(false)
 const error = ref('')
 const commissions = ref<AgentCommission[]>([])
 const scope = ref<'admin' | 'agent'>('admin')
+const isAdmin = ref(false)
+const isAgent = ref(false)
 
-onMounted(loadCommissions)
+onMounted(async () => {
+  const user = await getCurrentUser()
+  isAdmin.value = user.is_admin
+  isAgent.value = user.is_agent
+  scope.value = user.is_admin ? 'admin' : 'agent'
+  await loadCommissions()
+})
 
 async function loadCommissions() {
   loading.value = true
@@ -33,7 +42,7 @@ async function loadCommissions() {
 
     <SectionPanel title="分成记录" description="每日定时任务扫描已到期套餐周期后生成">
       <template #actions>
-        <div class="segmented">
+        <div v-if="isAdmin && isAgent" class="segmented">
           <button type="button" :class="{ active: scope === 'admin' }" @click="scope = 'admin'; loadCommissions()">管理员</button>
           <button type="button" :class="{ active: scope === 'agent' }" @click="scope = 'agent'; loadCommissions()">代理商</button>
         </div>

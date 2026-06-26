@@ -1,24 +1,43 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { clearAuthTokens } from '@/api/auth'
+import { getCurrentUser, type CurrentUser } from '@/api/session'
 
 const route = useRoute()
 const router = useRouter()
+const currentUser = ref<CurrentUser | null>(null)
 
 const navItems = [
-  { path: '/dashboard', label: '工作台' },
-  { path: '/agents', label: '代理管理' },
-  { path: '/agent-operations', label: '代理经营' },
-  { path: '/customers', label: '客户归属' },
-  { path: '/commissions', label: '分成记录' },
-  { path: '/settlements', label: '结算记录' },
-  { path: '/audit-logs', label: '审计日志' },
-  { path: '/settings', label: '系统设置' }
+  { path: '/dashboard', label: '工作台', roles: ['admin', 'agent'] },
+  { path: '/agents', label: '代理管理', roles: ['admin'] },
+  { path: '/agent-operations', label: '代理经营', roles: ['agent'] },
+  { path: '/customers', label: '客户归属', roles: ['admin'] },
+  { path: '/commissions', label: '分成记录', roles: ['admin', 'agent'] },
+  { path: '/settlements', label: '结算记录', roles: ['admin', 'agent'] },
+  { path: '/audit-logs', label: '审计日志', roles: ['admin'] },
+  { path: '/settings', label: '系统设置', roles: ['admin'] }
 ]
 
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
 const isPublicPage = computed(() => Boolean(route.meta.public))
+const visibleNavItems = computed(() =>
+  navItems.filter((item) => {
+    if (!currentUser.value) return item.path === '/dashboard'
+    return (
+      (item.roles.includes('admin') && currentUser.value.is_admin) ||
+      (item.roles.includes('agent') && currentUser.value.is_agent)
+    )
+  })
+)
+
+watch(
+  isPublicPage,
+  async (publicPage) => {
+    currentUser.value = publicPage ? null : await getCurrentUser().catch(() => null)
+  },
+  { immediate: true }
+)
 
 function logout() {
   clearAuthTokens()
@@ -41,7 +60,7 @@ function logout() {
 
       <nav class="nav-list" aria-label="主导航">
         <RouterLink
-          v-for="item in navItems"
+          v-for="item in visibleNavItems"
           :key="item.path"
           class="nav-item"
           :class="{ active: route.path === item.path }"

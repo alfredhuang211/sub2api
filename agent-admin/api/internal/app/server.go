@@ -57,6 +57,8 @@ func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/settings/public" && r.Method == http.MethodGet:
 		settings, err := s.repo.GetPublicSettings(r.Context())
 		writeResult(w, settings, err)
+	case path == "/me" && r.Method == http.MethodGet:
+		s.withAuth(false, false, http.HandlerFunc(s.currentUser)).ServeHTTP(w, r)
 	case strings.HasPrefix(path, "/admin/"):
 		s.withAuth(true, false, http.HandlerFunc(s.routeAdmin)).ServeHTTP(w, r)
 	case strings.HasPrefix(path, "/agent/"):
@@ -64,6 +66,20 @@ func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		WriteError(w, http.StatusNotFound, 404, "not found")
 	}
+}
+
+func (s *Server) currentUser(w http.ResponseWriter, r *http.Request) {
+	subject, _ := SubjectFromContext(r.Context())
+	WriteOK(w, CurrentUser{
+		ID:       subject.User.ID,
+		Email:    subject.User.Email,
+		Username: subject.User.Username,
+		Role:     subject.User.Role,
+		Status:   subject.User.Status,
+		IsAdmin:  subject.User.Role == "admin",
+		IsAgent:  subject.Agent != nil && subject.Agent.Status == "active",
+		Agent:    subject.Agent,
+	})
 }
 
 func (s *Server) withAuth(requireAdmin, requireAgent bool, next http.Handler) http.Handler {

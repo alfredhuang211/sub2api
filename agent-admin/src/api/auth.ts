@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { clearCurrentUser } from './session'
 
 export interface LoginRequest {
   email: string
@@ -44,6 +45,7 @@ export function saveAuthTokens(response: LoginResponse) {
 export function clearAuthTokens() {
   localStorage.removeItem('agent_admin_token')
   localStorage.removeItem('agent_admin_refresh_token')
+  clearCurrentUser()
 }
 
 export function hasAuthToken() {
