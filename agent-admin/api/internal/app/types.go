@@ -12,6 +12,14 @@ type User struct {
 	TokenVersion int64
 }
 
+type UserOption struct {
+	ID       int64  `json:"id"`
+	Email    string `json:"email"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
+}
+
 type AgentProfile struct {
 	ID             int64      `json:"id"`
 	UserID         int64      `json:"user_id"`
@@ -109,6 +117,17 @@ type AgentAuditLog struct {
 	TargetID      int64     `json:"target_id"`
 	Reason        *string   `json:"reason,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+type AgentAdminSettings struct {
+	TurnstileEnabled bool      `json:"turnstile_enabled"`
+	TurnstileSiteKey string    `json:"turnstile_site_key"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type PublicSettings struct {
+	TurnstileEnabled bool   `json:"turnstile_enabled"`
+	TurnstileSiteKey string `json:"turnstile_site_key"`
 }
 
 type AgentOrder struct {

@@ -180,6 +180,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_customer_relations_scheduled_effective_at
     WHERE status = 'scheduled';
 `,
 	},
+	{
+		Filename: "004_agent_admin_settings.sql",
+		SQL: `
+CREATE TABLE IF NOT EXISTS agent_admin_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO agent_admin_settings (key, value)
+VALUES
+    ('turnstile_enabled', 'false'),
+    ('turnstile_site_key', '')
+ON CONFLICT (key) DO NOTHING;
+`,
+	},
 }
 
 func RunMigrations(ctx context.Context, db *sql.DB) error {

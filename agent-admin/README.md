@@ -41,3 +41,5 @@ This project intentionally duplicates only the small API/types surface it needs 
 
 - [打包说明](docs/build.md)
 - [启动运行说明](docs/run.md)
+- [管理员使用说明](docs/admin-guide.md)
+- [代理商使用说明](docs/agent-guide.md)

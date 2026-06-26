@@ -20,6 +20,7 @@ const error = ref('')
 const invites = ref<AgentCustomer[]>([])
 const children = ref<AgentProfile[]>([])
 const orders = ref<AgentOrder[]>([])
+const childRateInputs = reactive<Record<number, string>>({})
 
 const childForm = reactive({
   user_id: '',
@@ -39,6 +40,9 @@ async function loadAll() {
     ])
     invites.value = invitePage.items ?? []
     children.value = childPage.items ?? []
+    for (const child of children.value) {
+      childRateInputs[child.id] = formatRatePercent(child.rate_bps)
+    }
     orders.value = orderPage.items ?? []
   } catch (err) {
     error.value = (err as { message?: string }).message || '加载代理经营数据失败'
@@ -57,9 +61,24 @@ async function submitChild() {
   await loadAll()
 }
 
+function selectedInviteLabel() {
+  const selected = invites.value.find((item) => String(item.user_id) === childForm.user_id)
+  if (!selected) return ''
+  return `${selected.email} / ${selected.username || '-'}`
+}
+
 async function saveChildRate(child: AgentProfile) {
-  await updateMyChildRate(child.id, child.rate_bps)
+  await updateMyChildRate(child.id, parseRatePercent(childRateInputs[child.id]))
   await loadAll()
+}
+
+function formatRatePercent(rateBps: number) {
+  return (Number(rateBps || 0) / 100).toFixed(2)
+}
+
+function parseRatePercent(value: string) {
+  const percent = Number(value)
+  return Number.isFinite(percent) ? Math.round(percent * 100) : 0
 }
 </script>
 
@@ -69,9 +88,15 @@ async function saveChildRate(child: AgentProfile) {
 
     <SectionPanel title="创建下级代理" description="只能把自己推荐码引入的用户指定为下级代理">
       <form class="form-grid" @submit.prevent="submitChild">
-        <label>
-          <span>推荐用户 ID</span>
-          <input v-model="childForm.user_id" class="input" type="number" min="1" required />
+        <label class="wide">
+          <span>推荐用户账号</span>
+          <select v-model="childForm.user_id" class="input" required>
+            <option value="" disabled>选择推荐用户</option>
+            <option v-for="item in invites" :key="item.user_id" :value="String(item.user_id)">
+              {{ item.email }} / {{ item.username || '-' }}
+            </option>
+          </select>
+          <small v-if="childForm.user_id" class="field-hint">已选择：{{ selectedInviteLabel() }}</small>
         </label>
         <label>
           <span>比例 %</span>
@@ -129,7 +154,18 @@ async function saveChildRate(child: AgentProfile) {
               </td>
               <td>{{ child.level }} 级</td>
               <td>
-                <input v-model.number="child.rate_bps" class="table-input" type="number" min="0" step="1" :title="formatPercent(child.rate_bps)" />
+                <div class="percent-input">
+                  <input
+                    v-model="childRateInputs[child.id]"
+                    class="table-input percent-table-input"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    :title="formatPercent(child.rate_bps)"
+                  />
+                  <span>%</span>
+                </div>
               </td>
               <td>{{ child.customers_count }}</td>
               <td><StatusBadge :status="child.status" /></td>

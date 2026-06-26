@@ -29,6 +29,81 @@ WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
 	return u, err
 }
 
+func (r *Repository) SearchAssignableUsers(ctx context.Context, filter ListFilter) ([]UserOption, int64, error) {
+	where := ` WHERE u.deleted_at IS NULL AND ap.id IS NULL`
+	args := []any{}
+	search := strings.TrimSpace(filter.Search)
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(" AND (u.email ILIKE $%d OR u.username ILIKE $%d)", len(args), len(args))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM users u
+LEFT JOIN agent_profiles ap ON ap.user_id = u.id
+`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, filter.Limit(), filter.Offset())
+	rows, err := r.db.QueryContext(ctx, `
+SELECT u.id, u.email, COALESCE(u.username, ''), u.role, u.status
+FROM users u
+LEFT JOIN agent_profiles ap ON ap.user_id = u.id
+`+where+` ORDER BY u.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := []UserOption{}
+	for rows.Next() {
+		var item UserOption
+		if err := rows.Scan(&item.ID, &item.Email, &item.Username, &item.Role, &item.Status); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+func (r *Repository) SearchUsers(ctx context.Context, filter ListFilter) ([]UserOption, int64, error) {
+	where := ` WHERE u.deleted_at IS NULL`
+	args := []any{}
+	search := strings.TrimSpace(filter.Search)
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(" AND (u.email ILIKE $%d OR u.username ILIKE $%d)", len(args), len(args))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, filter.Limit(), filter.Offset())
+	rows, err := r.db.QueryContext(ctx, `
+SELECT u.id, u.email, COALESCE(u.username, ''), u.role, u.status
+FROM users u
+`+where+` ORDER BY u.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := []UserOption{}
+	for rows.Next() {
+		var item UserOption
+		if err := rows.Scan(&item.ID, &item.Email, &item.Username, &item.Role, &item.Status); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) GetAgentByUserID(ctx context.Context, userID int64) (*AgentProfile, error) {
 	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.user_id = $1 AND u.deleted_at IS NULL`, userID)
 	if err != nil {
@@ -804,6 +879,100 @@ LEFT JOIN users u ON u.id = l.operator_user_id
 	return items, total, rows.Err()
 }
 
+func (r *Repository) GetSettings(ctx context.Context) (AgentAdminSettings, error) {
+	values, updatedAt, err := r.getSettingsMap(ctx)
+	if err != nil {
+		return AgentAdminSettings{}, err
+	}
+	return AgentAdminSettings{
+		TurnstileEnabled: parseBoolSetting(values["turnstile_enabled"]),
+		TurnstileSiteKey: strings.TrimSpace(values["turnstile_site_key"]),
+		UpdatedAt:        updatedAt,
+	}, nil
+}
+
+func (r *Repository) GetPublicSettings(ctx context.Context) (PublicSettings, error) {
+	settings, err := r.GetSettings(ctx)
+	if err != nil {
+		return PublicSettings{}, err
+	}
+	return PublicSettings{
+		TurnstileEnabled: settings.TurnstileEnabled,
+		TurnstileSiteKey: settings.TurnstileSiteKey,
+	}, nil
+}
+
+func (r *Repository) UpdateSettings(ctx context.Context, in AgentAdminSettings, operatorID int64) (AgentAdminSettings, error) {
+	siteKey := strings.TrimSpace(in.TurnstileSiteKey)
+	if in.TurnstileEnabled && siteKey == "" {
+		return AgentAdminSettings{}, fmt.Errorf("turnstile site key is required when enabled")
+	}
+
+	current, err := r.GetSettings(ctx)
+	if err != nil {
+		return AgentAdminSettings{}, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentAdminSettings{}, err
+	}
+	defer tx.Rollback()
+
+	pairs := map[string]string{
+		"turnstile_enabled":  formatBoolSetting(in.TurnstileEnabled),
+		"turnstile_site_key": siteKey,
+	}
+	for key, value := range pairs {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO agent_admin_settings (key, value, updated_by, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (key) DO UPDATE
+SET value = EXCLUDED.value,
+    updated_by = EXCLUDED.updated_by,
+    updated_at = NOW()`, key, value, operatorID); err != nil {
+			return AgentAdminSettings{}, err
+		}
+	}
+	next := AgentAdminSettings{TurnstileEnabled: in.TurnstileEnabled, TurnstileSiteKey: siteKey}
+	if err := insertAudit(ctx, tx, operatorID, "admin", "settings.update", "agent_admin_settings", 0, current, next, nil); err != nil {
+		return AgentAdminSettings{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentAdminSettings{}, err
+	}
+	return r.GetSettings(ctx)
+}
+
+func (r *Repository) getSettingsMap(ctx context.Context) (map[string]string, time.Time, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT key, value, updated_at FROM agent_admin_settings`)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer rows.Close()
+
+	values := map[string]string{
+		"turnstile_enabled":  "false",
+		"turnstile_site_key": "",
+	}
+	var latest time.Time
+	for rows.Next() {
+		var key, value string
+		var updatedAt time.Time
+		if err := rows.Scan(&key, &value, &updatedAt); err != nil {
+			return nil, time.Time{}, err
+		}
+		values[key] = value
+		if updatedAt.After(latest) {
+			latest = updatedAt
+		}
+	}
+	if latest.IsZero() {
+		latest = time.Now().UTC()
+	}
+	return values, latest, rows.Err()
+}
+
 func (r *Repository) InsertAudit(ctx context.Context, operatorID int64, role, action, targetType string, targetID int64, before, after any) error {
 	return insertAudit(ctx, r.db, operatorID, role, action, targetType, targetID, before, after, nil)
 }
@@ -877,6 +1046,22 @@ func nullableJSON(value []byte) any {
 		return nil
 	}
 	return string(value)
+}
+
+func parseBoolSetting(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatBoolSetting(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func defaultRateBPS(level int) int {

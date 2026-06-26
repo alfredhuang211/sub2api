@@ -54,6 +54,9 @@ func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case path == "/settings/public" && r.Method == http.MethodGet:
+		settings, err := s.repo.GetPublicSettings(r.Context())
+		writeResult(w, settings, err)
 	case strings.HasPrefix(path, "/admin/"):
 		s.withAuth(true, false, http.HandlerFunc(s.routeAdmin)).ServeHTTP(w, r)
 	case strings.HasPrefix(path, "/agent/"):
@@ -74,6 +77,41 @@ func (s *Server) routeAdmin(w http.ResponseWriter, r *http.Request) {
 	if path == "/agents/summary" && r.Method == http.MethodGet {
 		summary, err := s.repo.AdminSummary(r.Context())
 		writeResult(w, summary, err)
+		return
+	}
+	if path == "/settings" {
+		switch r.Method {
+		case http.MethodGet:
+			settings, err := s.repo.GetSettings(r.Context())
+			writeResult(w, settings, err)
+		case http.MethodPut:
+			var req struct {
+				TurnstileEnabled bool   `json:"turnstile_enabled"`
+				TurnstileSiteKey string `json:"turnstile_site_key"`
+			}
+			if !decodeJSON(w, r, &req) {
+				return
+			}
+			settings, err := s.repo.UpdateSettings(r.Context(), AgentAdminSettings{
+				TurnstileEnabled: req.TurnstileEnabled,
+				TurnstileSiteKey: req.TurnstileSiteKey,
+			}, subject.User.ID)
+			writeResult(w, settings, err)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		}
+		return
+	}
+	if path == "/users/assignable" && r.Method == http.MethodGet {
+		filter := parseListFilter(r)
+		items, total, err := s.repo.SearchAssignableUsers(r.Context(), filter)
+		writePage(w, items, total, filter, err)
+		return
+	}
+	if path == "/users/search" && r.Method == http.MethodGet {
+		filter := parseListFilter(r)
+		items, total, err := s.repo.SearchUsers(r.Context(), filter)
+		writePage(w, items, total, filter, err)
 		return
 	}
 	if path == "/agents" {

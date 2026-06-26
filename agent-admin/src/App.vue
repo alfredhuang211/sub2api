@@ -13,7 +13,8 @@ const navItems = [
   { path: '/customers', label: '客户归属' },
   { path: '/commissions', label: '分成记录' },
   { path: '/settlements', label: '结算记录' },
-  { path: '/audit-logs', label: '审计日志' }
+  { path: '/audit-logs', label: '审计日志' },
+  { path: '/settings', label: '系统设置' }
 ]
 
 const pageTitle = computed(() => String(route.meta.title || '工作台'))

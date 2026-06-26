@@ -204,6 +204,46 @@ http://<服务器IP>:3100
 - `DATABASE_URL` 使用 compose 内部的 `postgres` 服务名，不需要把 PostgreSQL 端口暴露到宿主机。
 - `JWT_SECRET` 必须和 `sub2api` 使用同一个固定值，不能留空；如果当前 `.env` 里为空，先设置固定值并重启 `sub2api`。
 
+### 一键更新并重启 agent-admin
+
+项目提供了脚本：
+
+```text
+agent-admin/agent_admin_reload.sh
+```
+
+把脚本放到服务器的 sub2api 部署目录，或在包含 `.env` 的目录执行：
+
+```bash
+./agent_admin_reload.sh
+```
+
+脚本会自动执行：
+
+- 读取 `.env`。
+- 检索并停止已有 `sub2api-agent-admin` 容器。
+- 删除旧容器。
+- 拉取 `ghcr.io/alfredhuang211/sub2api-agent-admin:latest` 最新镜像。
+- 使用当前已验证的 Docker 参数重新启动容器。
+
+默认参数：
+
+```bash
+CONTAINER_NAME=sub2api-agent-admin
+IMAGE=ghcr.io/alfredhuang211/sub2api-agent-admin:latest
+NETWORK=sub2api_sub2api-network
+HOST_PORT=3100
+SUB2API_BASE_URL=http://sub2api:8080
+MIGRATION_ENABLED=true
+SCHEDULER_ENABLED=true
+```
+
+如需覆盖网络名或端口：
+
+```bash
+NETWORK=sub2api_sub2api-network HOST_PORT=3100 ./agent_admin_reload.sh
+```
+
 ### sub2api 运行在宿主机
 
 如果 `sub2api` 直接运行在服务器宿主机的 `8080` 端口：

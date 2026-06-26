@@ -119,6 +119,14 @@ export interface AgentOrder {
   completed_at?: string | null
 }
 
+export interface UserOption {
+  id: number
+  email: string
+  username: string
+  role: string
+  status: string
+}
+
 export interface CreateAgentRequest {
   user_id: number
   level: AgentLevel
@@ -158,6 +166,20 @@ export async function getAdminAgentSummary() {
 
 export async function listAgents(params: ListParams = {}) {
   const { data } = await apiClient.get<PaginatedResponse<AgentProfile>>('/admin/agents', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function searchAssignableUsers(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<UserOption>>('/admin/users/assignable', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function searchUsers(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<UserOption>>('/admin/users/search', {
     params: withDefaults(params)
   })
   return data

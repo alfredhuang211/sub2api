@@ -152,6 +152,11 @@ h2 {
   min-width: 0;
 }
 
+.inline-field {
+  display: flex;
+  gap: 10px;
+}
+
 .input,
 .search-input {
   width: 100%;
@@ -263,6 +268,14 @@ h2 {
   padding: 12px 14px;
 }
 
+.success-banner {
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 12px 14px;
+}
+
 .metrics-grid,
 .detail-grid {
   display: grid;
@@ -353,6 +366,65 @@ h2 {
   grid-column: span 2;
 }
 
+.settings-form {
+  display: grid;
+  max-width: 760px;
+  gap: 16px;
+}
+
+.settings-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-form label > span,
+.field-hint,
+.form-footer {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.switch-row {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.switch-row span {
+  display: grid;
+  gap: 4px;
+}
+
+.switch-row strong {
+  color: #1d2733;
+}
+
+.switch-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.field-hint {
+  margin-bottom: 0;
+  line-height: 1.6;
+}
+
+.form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.form-footer span {
+  margin-right: auto;
+}
+
 .definition-list {
   grid-template-columns: 120px minmax(0, 1fr);
 }
@@ -403,9 +475,72 @@ h2 {
   padding: 6px 8px;
 }
 
+.agents-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.agents-table th:nth-child(1),
+.agents-table td:nth-child(1) {
+  width: 230px;
+}
+
+.agents-table th:nth-child(2),
+.agents-table td:nth-child(2),
+.agents-table th:nth-child(5),
+.agents-table td:nth-child(5),
+.agents-table th:nth-child(7),
+.agents-table td:nth-child(7) {
+  width: 86px;
+}
+
+.agents-table th:nth-child(3),
+.agents-table td:nth-child(3) {
+  width: 180px;
+}
+
+.agents-table th:nth-child(4),
+.agents-table td:nth-child(4) {
+  width: 120px;
+}
+
+.agents-table th:nth-child(6),
+.agents-table td:nth-child(6) {
+  width: 128px;
+}
+
+.agents-table th:nth-child(8),
+.agents-table td:nth-child(8) {
+  width: 240px;
+}
+
+.agents-table th:nth-child(9),
+.agents-table td:nth-child(9) {
+  width: 150px;
+}
+
+.agents-table td {
+  overflow-wrap: anywhere;
+}
+
+.percent-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.percent-table-input {
+  width: 78px;
+}
+
+.reason-input {
+  min-width: 0;
+}
+
 .row-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .settlement-adjust {
@@ -481,6 +616,10 @@ h2 {
   color: #64748b;
   font-size: 13px;
   font-weight: 700;
+}
+
+.turnstile-box {
+  min-height: 65px;
 }
 
 .login-button {

@@ -7,6 +7,7 @@ import SettlementsView from './views/SettlementsView.vue'
 import AuditLogsView from './views/AuditLogsView.vue'
 import LoginView from './views/LoginView.vue'
 import AgentOperationsView from './views/AgentOperationsView.vue'
+import SettingsView from './views/SettingsView.vue'
 import { hasAuthToken } from './api/auth'
 
 const router = createRouter({
@@ -20,7 +21,8 @@ const router = createRouter({
     { path: '/customers', component: CustomersView, meta: { title: '客户归属' } },
     { path: '/commissions', component: CommissionsView, meta: { title: '分成记录' } },
     { path: '/settlements', component: SettlementsView, meta: { title: '结算记录' } },
-    { path: '/audit-logs', component: AuditLogsView, meta: { title: '审计日志' } }
+    { path: '/audit-logs', component: AuditLogsView, meta: { title: '审计日志' } },
+    { path: '/settings', component: SettingsView, meta: { title: '系统设置' } }
   ]
 })
 

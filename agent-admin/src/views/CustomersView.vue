@@ -7,9 +7,11 @@ import {
   listAgentCustomers,
   listAgents,
   listCustomerRelationChanges,
+  searchUsers,
   type AgentCustomer,
   type AgentCustomerRelationChange,
-  type AgentProfile
+  type AgentProfile,
+  type UserOption
 } from '@/api/agents'
 import { formatDateTime, formatMinorMoney } from '@/utils/format'
 
@@ -19,6 +21,9 @@ const agents = ref<AgentProfile[]>([])
 const selectedAgentId = ref<number | null>(null)
 const customers = ref<AgentCustomer[]>([])
 const changes = ref<AgentCustomerRelationChange[]>([])
+const customerSearch = ref('')
+const customerOptions = ref<UserOption[]>([])
+const customerSearchLoading = ref(false)
 
 const form = reactive({
   customer_user_id: '',
@@ -64,9 +69,38 @@ async function submitAssign() {
     reason: form.reason.trim()
   })
   form.customer_user_id = ''
+  customerSearch.value = ''
+  customerOptions.value = []
   form.reason = ''
   await loadCustomers()
   await loadChanges()
+}
+
+async function searchCustomers() {
+  const keyword = customerSearch.value.trim()
+  if (!keyword) {
+    customerOptions.value = []
+    return
+  }
+  customerSearchLoading.value = true
+  error.value = ''
+  try {
+    const page = await searchUsers({ search: keyword, page_size: 20 })
+    customerOptions.value = page.items ?? []
+    if (!customerOptions.value.some((item) => String(item.id) === form.customer_user_id)) {
+      form.customer_user_id = ''
+    }
+  } catch (err) {
+    error.value = (err as { message?: string }).message || '搜索客户失败'
+  } finally {
+    customerSearchLoading.value = false
+  }
+}
+
+function selectedCustomerLabel() {
+  const selected = customerOptions.value.find((item) => String(item.id) === form.customer_user_id)
+  if (!selected) return ''
+  return `${selected.email} / ${selected.username || '-'}`
 }
 </script>
 
@@ -76,9 +110,24 @@ async function submitAssign() {
 
     <SectionPanel title="手动归属客户" description="管理员调整原因必填，默认从下一个完整套餐周期生效">
       <form class="form-grid" @submit.prevent="submitAssign">
-        <label>
-          <span>客户用户 ID</span>
-          <input v-model="form.customer_user_id" class="input" type="number" min="1" required />
+        <label class="wide">
+          <span>客户账号</span>
+          <div class="inline-field">
+            <input v-model.trim="customerSearch" class="input" type="search" placeholder="输入邮箱或用户名搜索" @keyup.enter.prevent="searchCustomers" />
+            <button class="secondary-button" type="button" :disabled="customerSearchLoading" @click="searchCustomers">
+              {{ customerSearchLoading ? '搜索中' : '搜索' }}
+            </button>
+          </div>
+        </label>
+        <label class="wide">
+          <span>选择客户</span>
+          <select v-model="form.customer_user_id" class="input" required>
+            <option value="" disabled>请选择客户</option>
+            <option v-for="user in customerOptions" :key="user.id" :value="String(user.id)">
+              {{ user.email }} / {{ user.username || '-' }}
+            </option>
+          </select>
+          <small v-if="form.customer_user_id" class="field-hint">已选择：{{ selectedCustomerLabel() }}</small>
         </label>
         <label>
           <span>目标代理</span>
