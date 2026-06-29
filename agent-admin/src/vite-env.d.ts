@@ -6,6 +6,6 @@ declare module 'vue-router' {
   interface RouteMeta {
     title?: string
     public?: boolean
-    roles?: Array<'admin' | 'agent'>
+    roles?: Array<'base_admin' | 'admin' | 'agent'>
   }
 }
