@@ -176,11 +176,15 @@ GET    /api/v1/admin/agents/:id/children
 GET    /api/v1/admin/agents/:id/summary
 PUT    /api/v1/admin/agents/:id/commission-rate
 POST   /api/v1/admin/agents/:id/force-adjust
+GET    /api/v1/admin/admin-users
+POST   /api/v1/admin/admin-users
+GET    /api/v1/admin/admin-users/candidates
+POST   /api/v1/admin/admin-users/:id/revoke
 POST   /api/v1/admin/agent-customer-relations
 GET    /api/v1/admin/agent-customer-relations/changes
 GET    /api/v1/admin/agent-commissions
 GET    /api/v1/admin/agent-settlements
-POST   /api/v1/admin/agent-settlements/:id/mark-paid
+POST   /api/v1/admin/agent-settlements/:id/register-payment
 POST   /api/v1/admin/agent-settlements/:id/adjust
 GET    /api/v1/admin/agent-audit-logs
 ```
@@ -235,6 +239,21 @@ agent-admin 自有迁移记录表。
 filename              text primary key
 checksum              text not null
 applied_at            timestamptz not null default now()
+```
+
+### agent_admin_users
+
+Agent Admin 授权管理员表。原系统 `users.role = admin` 的用户是基础管理员，不需要写入该表；该表只保存基础管理员额外授权的后台管理员。
+
+```text
+id                    bigint primary key
+user_id               bigint not null unique       # references users(id)
+status                varchar(20) not null          # active, disabled
+created_by            bigint null                   # users(id)
+revoked_by            bigint null                   # users(id)
+revoked_at            timestamptz null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
 ### agent_profiles
@@ -358,6 +377,24 @@ frozen_until          timestamptz null
 paid_at               timestamptz null
 paid_by_user_id       bigint null
 payment_reference     varchar(128) null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+```
+
+### agent_settlement_payments
+
+管理员线下结算登记明细。当前一条结算只允许登记一次，后续如需拆分付款可调整唯一约束和业务状态。
+
+```text
+id                    bigint primary key
+settlement_id         bigint not null unique
+agent_id              bigint not null
+amount                bigint not null
+payment_method        varchar(32) null          # bank_transfer, alipay, wechat_pay, cash, other
+payment_reference     varchar(128) null
+paid_at               timestamptz null
+remark                text null
+created_by            bigint null
 created_at            timestamptz not null
 updated_at            timestamptz not null
 ```
@@ -502,7 +539,7 @@ P0 SQL 策略：
 2. 扣除负数冲正。
 3. 检查是否达到 100 元。
 4. 生成结算记录。
-5. 管理员标记已支付。
+5. 管理员线下付款后登记结算。
 
 P0 SQL 策略：
 
@@ -511,6 +548,14 @@ P0 SQL 策略：
 - `net_amount = amount - reverse_amount`。
 - `net_amount >= 10000` 且冻结期结束后状态为 `payable`，否则为 `pending`。
 - 已标记 `paid` 的结算记录不会被后续汇总覆盖状态。
+
+线下结算登记：
+
+- 管理员对 `payable` 状态结算调用登记接口。
+- 请求中 `amount` 必填并以分存储；支付方式、支付时间、流水号和备注可选。
+- 登记成功后写入 `agent_settlement_payments`，并更新 `agent_settlements.status = paid`、`paid_at`、`paid_by_user_id` 和可选 `payment_reference`。
+- 代理商查询自己的结算列表时可看到付款金额、支付方式、支付时间、流水号、备注和登记人。
+- 登记操作写入 `agent_audit_logs`，用于管理员追溯。
 
 ## 9. 配置设计
 
@@ -704,6 +749,7 @@ agent-admin 改动不触发 sub2api CI 和 Security Scan。
 - JWT 本地验签。
 - agent-admin 自有迁移表和业务表。
 - 管理员代理管理、客户归属、佣金、结算、审计 API。
+- 基础管理员授权和撤销 agent-admin 管理员 API。
 - 管理员代理强制调整和结算调整 API。
 - 代理端资料、客户、推荐用户、下级、上级、佣金、结算、订单 API。
 - 代理经营前端页面。

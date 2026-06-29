@@ -548,6 +548,22 @@ h2 {
   margin-top: 8px;
 }
 
+.settlements-table {
+  min-width: 1320px;
+}
+
+.settlement-payment {
+  display: flex;
+  width: 420px;
+  max-width: 100%;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settlement-datetime {
+  width: 170px;
+}
+
 .segmented {
   display: flex;
   border: 1px solid #d9e0e8;

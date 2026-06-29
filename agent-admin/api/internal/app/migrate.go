@@ -197,6 +197,48 @@ VALUES
 ON CONFLICT (key) DO NOTHING;
 `,
 	},
+	{
+		Filename: "005_agent_settlement_payments.sql",
+		SQL: `
+CREATE TABLE IF NOT EXISTS agent_settlement_payments (
+    id BIGSERIAL PRIMARY KEY,
+    settlement_id BIGINT NOT NULL UNIQUE REFERENCES agent_settlements(id) ON DELETE CASCADE,
+    agent_id BIGINT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+    amount BIGINT NOT NULL,
+    payment_method VARCHAR(32) NULL,
+    payment_reference VARCHAR(128) NULL,
+    paid_at TIMESTAMPTZ NULL,
+    remark TEXT NULL,
+    created_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_agent_settlement_payments_amount CHECK (amount > 0),
+    CONSTRAINT chk_agent_settlement_payments_method CHECK (
+        payment_method IS NULL OR payment_method IN ('bank_transfer', 'alipay', 'wechat_pay', 'cash', 'other')
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_agent_settlement_payments_agent_id
+    ON agent_settlement_payments(agent_id, created_at DESC);
+`,
+	},
+	{
+		Filename: "006_agent_admin_users.sql",
+		SQL: `
+CREATE TABLE IF NOT EXISTS agent_admin_users (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+    revoked_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_agent_admin_users_status CHECK (status IN ('active', 'disabled'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_admin_users_status
+    ON agent_admin_users(status);
+`,
+	},
 }
 
 func RunMigrations(ctx context.Context, db *sql.DB) error {

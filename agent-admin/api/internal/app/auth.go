@@ -18,8 +18,10 @@ type contextKey string
 const subjectContextKey contextKey = "agent_admin_subject"
 
 type Subject struct {
-	User  User
-	Agent *AgentProfile
+	User        User
+	Agent       *AgentProfile
+	IsBaseAdmin bool
+	IsAdmin     bool
 }
 
 type JWTClaims struct {
@@ -37,7 +39,7 @@ func AuthMiddleware(cfg Config, repo *Repository, requireAdmin bool, requireAgen
 			WriteError(w, http.StatusUnauthorized, 401, err.Error())
 			return
 		}
-		if requireAdmin && subject.User.Role != "admin" {
+		if requireAdmin && !subject.IsAdmin {
 			WriteError(w, http.StatusForbidden, 403, "admin permission required")
 			return
 		}
@@ -89,7 +91,17 @@ func authenticate(ctx context.Context, cfg Config, repo *Repository, authHeader 
 		return Subject{}, fmt.Errorf("load agent: %w", err)
 	}
 
-	return Subject{User: user, Agent: agent}, nil
+	isBaseAdmin := user.Role == "admin"
+	isAdmin := isBaseAdmin
+	if !isAdmin {
+		ok, err := repo.IsAgentAdminUser(ctx, user.ID)
+		if err != nil {
+			return Subject{}, fmt.Errorf("load admin permission: %w", err)
+		}
+		isAdmin = ok
+	}
+
+	return Subject{User: user, Agent: agent, IsBaseAdmin: isBaseAdmin, IsAdmin: isAdmin}, nil
 }
 
 func parseJWT(cfg Config, tokenString string) (*JWTClaims, error) {

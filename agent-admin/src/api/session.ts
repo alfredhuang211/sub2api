@@ -7,6 +7,7 @@ export interface CurrentUser {
   username: string
   role: string
   status: string
+  is_base_admin: boolean
   is_admin: boolean
   is_agent: boolean
   agent?: AgentProfile | null
@@ -19,11 +20,15 @@ export async function getCurrentUser(force = false) {
   if (!force && currentUserCache) return currentUserCache
   if (!force && currentUserPromise) return currentUserPromise
 
-  currentUserPromise = apiClient.get<CurrentUser>('/me').then(({ data }) => {
-    currentUserCache = data
-    currentUserPromise = null
-    return data
-  })
+  currentUserPromise = apiClient
+    .get<CurrentUser>('/me')
+    .then(({ data }) => {
+      currentUserCache = data
+      return data
+    })
+    .finally(() => {
+      currentUserPromise = null
+    })
 
   return currentUserPromise
 }

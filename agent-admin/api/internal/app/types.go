@@ -21,14 +21,15 @@ type UserOption struct {
 }
 
 type CurrentUser struct {
-	ID       int64         `json:"id"`
-	Email    string        `json:"email"`
-	Username string        `json:"username"`
-	Role     string        `json:"role"`
-	Status   string        `json:"status"`
-	IsAdmin  bool          `json:"is_admin"`
-	IsAgent  bool          `json:"is_agent"`
-	Agent    *AgentProfile `json:"agent,omitempty"`
+	ID          int64         `json:"id"`
+	Email       string        `json:"email"`
+	Username    string        `json:"username"`
+	Role        string        `json:"role"`
+	Status      string        `json:"status"`
+	IsBaseAdmin bool          `json:"is_base_admin"`
+	IsAdmin     bool          `json:"is_admin"`
+	IsAgent     bool          `json:"is_agent"`
+	Agent       *AgentProfile `json:"agent,omitempty"`
 }
 
 type AgentProfile struct {
@@ -107,16 +108,22 @@ type AgentCommission struct {
 }
 
 type AgentSettlement struct {
-	ID            int64      `json:"id"`
-	AgentID       int64      `json:"agent_id"`
-	AgentEmail    string     `json:"agent_email"`
-	PeriodMonth   string     `json:"period_month"`
-	Amount        int64      `json:"amount"`
-	ReverseAmount int64      `json:"reverse_amount"`
-	NetAmount     int64      `json:"net_amount"`
-	Status        string     `json:"status"`
-	FrozenUntil   *time.Time `json:"frozen_until,omitempty"`
-	PaidAt        *time.Time `json:"paid_at,omitempty"`
+	ID                   int64      `json:"id"`
+	AgentID              int64      `json:"agent_id"`
+	AgentEmail           string     `json:"agent_email"`
+	PeriodMonth          string     `json:"period_month"`
+	Amount               int64      `json:"amount"`
+	ReverseAmount        int64      `json:"reverse_amount"`
+	NetAmount            int64      `json:"net_amount"`
+	Status               string     `json:"status"`
+	FrozenUntil          *time.Time `json:"frozen_until,omitempty"`
+	PaidAt               *time.Time `json:"paid_at,omitempty"`
+	PaymentAmount        *int64     `json:"payment_amount,omitempty"`
+	PaymentMethod        *string    `json:"payment_method,omitempty"`
+	PaymentReference     *string    `json:"payment_reference,omitempty"`
+	PaymentRemark        *string    `json:"payment_remark,omitempty"`
+	PaymentRegisteredAt  *time.Time `json:"payment_registered_at,omitempty"`
+	PaymentOperatorEmail *string    `json:"payment_operator_email,omitempty"`
 }
 
 type AgentAuditLog struct {
@@ -134,6 +141,18 @@ type AgentAdminSettings struct {
 	TurnstileEnabled bool      `json:"turnstile_enabled"`
 	TurnstileSiteKey string    `json:"turnstile_site_key"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type AgentAdminUser struct {
+	ID             int64      `json:"id"`
+	UserID         int64      `json:"user_id"`
+	Email          string     `json:"email"`
+	Username       string     `json:"username"`
+	Source         string     `json:"source"`
+	Status         string     `json:"status"`
+	CreatedByEmail *string    `json:"created_by_email,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 }
 
 type PublicSettings struct {

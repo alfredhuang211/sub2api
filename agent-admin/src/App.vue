@@ -16,7 +16,8 @@ const navItems = [
   { path: '/commissions', label: '分成记录', roles: ['admin', 'agent'] },
   { path: '/settlements', label: '结算记录', roles: ['admin', 'agent'] },
   { path: '/audit-logs', label: '审计日志', roles: ['admin'] },
-  { path: '/settings', label: '系统设置', roles: ['admin'] }
+  { path: '/admin-users', label: '管理员授权', roles: ['base_admin'] },
+  { path: '/settings', label: '系统设置', roles: ['base_admin'] }
 ]
 
 const pageTitle = computed(() => String(route.meta.title || '工作台'))
@@ -25,6 +26,7 @@ const visibleNavItems = computed(() =>
   navItems.filter((item) => {
     if (!currentUser.value) return item.path === '/dashboard'
     return (
+      (item.roles.includes('base_admin') && currentUser.value.is_base_admin) ||
       (item.roles.includes('admin') && currentUser.value.is_admin) ||
       (item.roles.includes('agent') && currentUser.value.is_agent)
     )

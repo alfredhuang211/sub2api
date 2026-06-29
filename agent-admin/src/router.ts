@@ -8,7 +8,8 @@ import AuditLogsView from './views/AuditLogsView.vue'
 import LoginView from './views/LoginView.vue'
 import AgentOperationsView from './views/AgentOperationsView.vue'
 import SettingsView from './views/SettingsView.vue'
-import { hasAuthToken } from './api/auth'
+import AdminUsersView from './views/AdminUsersView.vue'
+import { clearAuthTokens, hasAuthToken } from './api/auth'
 import { getCurrentUser } from './api/session'
 
 const router = createRouter({
@@ -23,7 +24,8 @@ const router = createRouter({
     { path: '/commissions', component: CommissionsView, meta: { title: '分成记录', roles: ['admin', 'agent'] } },
     { path: '/settlements', component: SettlementsView, meta: { title: '结算记录', roles: ['admin', 'agent'] } },
     { path: '/audit-logs', component: AuditLogsView, meta: { title: '审计日志', roles: ['admin'] } },
-    { path: '/settings', component: SettingsView, meta: { title: '系统设置', roles: ['admin'] } }
+    { path: '/admin-users', component: AdminUsersView, meta: { title: '管理员授权', roles: ['base_admin'] } },
+    { path: '/settings', component: SettingsView, meta: { title: '系统设置', roles: ['base_admin'] } }
   ]
 })
 
@@ -42,6 +44,7 @@ router.beforeEach(async (to) => {
   try {
     const user = await getCurrentUser()
     const allowed =
+      (requiredRoles.includes('base_admin') && user.is_base_admin) ||
       (requiredRoles.includes('admin') && user.is_admin) ||
       (requiredRoles.includes('agent') && user.is_agent)
     if (!allowed) {
@@ -49,6 +52,7 @@ router.beforeEach(async (to) => {
       return true
     }
   } catch {
+    clearAuthTokens()
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 

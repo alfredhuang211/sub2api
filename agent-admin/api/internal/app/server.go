@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Server struct {
@@ -71,14 +72,15 @@ func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request) {
 func (s *Server) currentUser(w http.ResponseWriter, r *http.Request) {
 	subject, _ := SubjectFromContext(r.Context())
 	WriteOK(w, CurrentUser{
-		ID:       subject.User.ID,
-		Email:    subject.User.Email,
-		Username: subject.User.Username,
-		Role:     subject.User.Role,
-		Status:   subject.User.Status,
-		IsAdmin:  subject.User.Role == "admin",
-		IsAgent:  subject.Agent != nil && subject.Agent.Status == "active",
-		Agent:    subject.Agent,
+		ID:          subject.User.ID,
+		Email:       subject.User.Email,
+		Username:    subject.User.Username,
+		Role:        subject.User.Role,
+		Status:      subject.User.Status,
+		IsBaseAdmin: subject.IsBaseAdmin,
+		IsAdmin:     subject.IsAdmin,
+		IsAgent:     subject.Agent != nil && subject.Agent.Status == "active",
+		Agent:       subject.Agent,
 	})
 }
 
@@ -96,6 +98,10 @@ func (s *Server) routeAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/settings" {
+		if !subject.IsBaseAdmin {
+			WriteError(w, http.StatusForbidden, 403, "base admin permission required")
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			settings, err := s.repo.GetSettings(r.Context())
@@ -116,6 +122,55 @@ func (s *Server) routeAdmin(w http.ResponseWriter, r *http.Request) {
 		default:
 			WriteError(w, http.StatusMethodNotAllowed, 405, "method not allowed")
 		}
+		return
+	}
+	if path == "/admin-users" && r.Method == http.MethodGet {
+		if !subject.IsBaseAdmin {
+			WriteError(w, http.StatusForbidden, 403, "base admin permission required")
+			return
+		}
+		filter := parseListFilter(r)
+		items, total, err := s.repo.ListAgentAdminUsers(r.Context(), filter)
+		writePage(w, items, total, filter, err)
+		return
+	}
+	if path == "/admin-users" && r.Method == http.MethodPost {
+		if !subject.IsBaseAdmin {
+			WriteError(w, http.StatusForbidden, 403, "base admin permission required")
+			return
+		}
+		var req struct {
+			UserID int64 `json:"user_id"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		item, err := s.repo.GrantAgentAdmin(r.Context(), req.UserID, subject.User.ID)
+		writeResult(w, item, err)
+		return
+	}
+	if strings.HasPrefix(path, "/admin-users/") && strings.HasSuffix(path, "/revoke") && r.Method == http.MethodPost {
+		if !subject.IsBaseAdmin {
+			WriteError(w, http.StatusForbidden, 403, "base admin permission required")
+			return
+		}
+		idText := strings.TrimSuffix(strings.TrimPrefix(path, "/admin-users/"), "/revoke")
+		id, ok := parseID(w, idText)
+		if !ok {
+			return
+		}
+		item, err := s.repo.RevokeAgentAdmin(r.Context(), id, subject.User.ID)
+		writeResult(w, item, err)
+		return
+	}
+	if path == "/admin-users/candidates" && r.Method == http.MethodGet {
+		if !subject.IsBaseAdmin {
+			WriteError(w, http.StatusForbidden, 403, "base admin permission required")
+			return
+		}
+		filter := parseListFilter(r)
+		items, total, err := s.repo.SearchNonAdminUsers(r.Context(), filter)
+		writePage(w, items, total, filter, err)
 		return
 	}
 	if path == "/users/assignable" && r.Method == http.MethodGet {
@@ -187,13 +242,26 @@ func (s *Server) routeAdmin(w http.ResponseWriter, r *http.Request) {
 		writePage(w, items, total, filter, err)
 		return
 	}
-	if strings.HasPrefix(path, "/agent-settlements/") && strings.HasSuffix(path, "/mark-paid") && r.Method == http.MethodPost {
-		idText := strings.TrimSuffix(strings.TrimPrefix(path, "/agent-settlements/"), "/mark-paid")
+	if strings.HasPrefix(path, "/agent-settlements/") && strings.HasSuffix(path, "/register-payment") && r.Method == http.MethodPost {
+		idText := strings.TrimSuffix(strings.TrimPrefix(path, "/agent-settlements/"), "/register-payment")
 		id, ok := parseID(w, idText)
 		if !ok {
 			return
 		}
-		item, err := s.repo.MarkSettlementPaid(r.Context(), id, subject.User.ID)
+		var req struct {
+			Amount           int64      `json:"amount"`
+			PaymentMethod    *string    `json:"payment_method"`
+			PaymentReference *string    `json:"payment_reference"`
+			PaidAt           *time.Time `json:"paid_at"`
+			Remark           *string    `json:"remark"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		item, err := s.repo.RegisterSettlementPayment(r.Context(), id, RegisterSettlementPaymentInput{
+			Amount: req.Amount, PaymentMethod: req.PaymentMethod, PaymentReference: req.PaymentReference,
+			PaidAt: req.PaidAt, Remark: req.Remark, OperatorID: subject.User.ID,
+		})
 		writeResult(w, item, err)
 		return
 	}

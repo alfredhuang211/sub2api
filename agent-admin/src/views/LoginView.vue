@@ -2,6 +2,7 @@
 import { nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login, login2FA, saveAuthTokens } from '@/api/auth'
+import { getCurrentUser } from '@/api/session'
 import { getPublicSettings } from '@/api/settings'
 
 declare global {
@@ -96,8 +97,14 @@ async function submitLogin() {
     }
 
     saveAuthTokens(response)
+    try {
+      await getCurrentUser(true)
+    } catch {
+      error.value = '登录成功，但身份信息加载失败，请稍后重试或刷新页面'
+      return
+    }
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
-    router.replace(redirect)
+    await router.replace(redirect)
   } catch (err) {
     const message = err && typeof err === 'object' && 'message' in err ? String((err as { message?: string }).message) : ''
     error.value = message || '登录失败，请检查账号密码'

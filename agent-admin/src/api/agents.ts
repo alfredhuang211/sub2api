@@ -96,6 +96,12 @@ export interface AgentSettlement {
   status: SettlementStatus
   frozen_until?: string | null
   paid_at?: string | null
+  payment_amount?: number | null
+  payment_method?: string | null
+  payment_reference?: string | null
+  payment_remark?: string | null
+  payment_registered_at?: string | null
+  payment_operator_email?: string | null
 }
 
 export interface AgentAuditLog {
@@ -125,6 +131,18 @@ export interface UserOption {
   username: string
   role: string
   status: string
+}
+
+export interface AgentAdminUser {
+  id: number
+  user_id: number
+  email: string
+  username: string
+  source: 'base' | 'delegated'
+  status: 'active' | 'disabled'
+  created_by_email?: string | null
+  created_at: string
+  revoked_at?: string | null
 }
 
 export interface CreateAgentRequest {
@@ -159,6 +177,14 @@ export interface AdjustSettlementRequest {
   reason: string
 }
 
+export interface RegisterSettlementPaymentRequest {
+  amount: number
+  payment_method?: string
+  payment_reference?: string
+  paid_at?: string
+  remark?: string
+}
+
 export async function getAdminAgentSummary() {
   const { data } = await apiClient.get<AgentSummary>('/admin/agents/summary')
   return data
@@ -182,6 +208,31 @@ export async function searchUsers(params: ListParams = {}) {
   const { data } = await apiClient.get<PaginatedResponse<UserOption>>('/admin/users/search', {
     params: withDefaults(params)
   })
+  return data
+}
+
+export async function listAgentAdminUsers(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentAdminUser>>('/admin/admin-users', {
+    params: withDefaults(params)
+  })
+  return data
+}
+
+export async function searchAgentAdminCandidates(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<UserOption>>(
+    '/admin/admin-users/candidates',
+    { params: withDefaults(params) }
+  )
+  return data
+}
+
+export async function grantAgentAdmin(user_id: number) {
+  const { data } = await apiClient.post<AgentAdminUser>('/admin/admin-users', { user_id })
+  return data
+}
+
+export async function revokeAgentAdmin(id: number) {
+  const { data } = await apiClient.post<AgentAdminUser>(`/admin/admin-users/${id}/revoke`)
   return data
 }
 
@@ -267,8 +318,14 @@ export async function listSettlements(params: ListParams = {}) {
   return data
 }
 
-export async function markSettlementPaid(id: number) {
-  const { data } = await apiClient.post<AgentSettlement>(`/admin/agent-settlements/${id}/mark-paid`)
+export async function registerSettlementPayment(
+  id: number,
+  payload: RegisterSettlementPaymentRequest
+) {
+  const { data } = await apiClient.post<AgentSettlement>(
+    `/admin/agent-settlements/${id}/register-payment`,
+    payload
+  )
   return data
 }
 

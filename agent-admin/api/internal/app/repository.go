@@ -104,6 +104,46 @@ FROM users u
 	return items, total, rows.Err()
 }
 
+func (r *Repository) SearchNonAdminUsers(ctx context.Context, filter ListFilter) ([]UserOption, int64, error) {
+	where := ` WHERE u.deleted_at IS NULL AND u.status = 'active' AND u.role <> 'admin' AND active_admin.user_id IS NULL`
+	args := []any{}
+	search := strings.TrimSpace(filter.Search)
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(" AND (u.email ILIKE $%d OR u.username ILIKE $%d)", len(args), len(args))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM users u
+LEFT JOIN agent_admin_users active_admin ON active_admin.user_id = u.id AND active_admin.status = 'active'
+`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, filter.Limit(), filter.Offset())
+	rows, err := r.db.QueryContext(ctx, `
+SELECT u.id, u.email, COALESCE(u.username, ''), u.role, u.status
+FROM users u
+LEFT JOIN agent_admin_users active_admin ON active_admin.user_id = u.id AND active_admin.status = 'active'
+`+where+` ORDER BY u.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := []UserOption{}
+	for rows.Next() {
+		var item UserOption
+		if err := rows.Scan(&item.ID, &item.Email, &item.Username, &item.Role, &item.Status); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) GetAgentByUserID(ctx context.Context, userID int64) (*AgentProfile, error) {
 	rows, err := r.db.QueryContext(ctx, agentSelectSQL()+` WHERE ap.user_id = $1 AND u.deleted_at IS NULL`, userID)
 	if err != nil {
@@ -595,31 +635,91 @@ JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL
 	defer rows.Close()
 	items := []AgentSettlement{}
 	for rows.Next() {
-		var item AgentSettlement
-		var frozenUntil, paidAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentEmail, &item.PeriodMonth, &item.Amount, &item.ReverseAmount, &item.NetAmount, &item.Status, &frozenUntil, &paidAt); err != nil {
+		item, err := scanSettlementRow(rows)
+		if err != nil {
 			return nil, 0, err
-		}
-		if frozenUntil.Valid {
-			item.FrozenUntil = &frozenUntil.Time
-		}
-		if paidAt.Valid {
-			item.PaidAt = &paidAt.Time
 		}
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
 }
 
-func (r *Repository) MarkSettlementPaid(ctx context.Context, id, operatorID int64) (*AgentSettlement, error) {
-	result, err := r.db.ExecContext(ctx, `UPDATE agent_settlements SET status='paid', paid_at=NOW(), paid_by_user_id=$1, updated_at=NOW() WHERE id=$2`, operatorID, id)
+type RegisterSettlementPaymentInput struct {
+	Amount           int64
+	PaymentMethod    *string
+	PaymentReference *string
+	PaidAt           *time.Time
+	Remark           *string
+	OperatorID       int64
+}
+
+func (r *Repository) RegisterSettlementPayment(ctx context.Context, id int64, in RegisterSettlementPaymentInput) (*AgentSettlement, error) {
+	if in.Amount <= 0 {
+		return nil, fmt.Errorf("amount must be greater than 0")
+	}
+	method := optionalTrimmedString(in.PaymentMethod)
+	if method != nil {
+		switch *method {
+		case "bank_transfer", "alipay", "wechat_pay", "cash", "other":
+		default:
+			return nil, fmt.Errorf("invalid payment method")
+		}
+	}
+	reference := optionalTrimmedString(in.PaymentReference)
+	remark := optionalTrimmedString(in.Remark)
+	paidAt := time.Now().UTC()
+	if in.PaidAt != nil {
+		paidAt = *in.PaidAt
+	}
+
+	current, err := r.GetSettlementByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		return nil, sql.ErrNoRows
+	if current.Status != "payable" {
+		return nil, fmt.Errorf("only payable settlement can register payment")
 	}
-	_ = r.InsertAudit(ctx, operatorID, "admin", "settlement.mark_paid", "agent_settlement", id, nil, nil)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO agent_settlement_payments (
+    settlement_id, agent_id, amount, payment_method, payment_reference, paid_at, remark, created_by
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+)`, id, current.AgentID, in.Amount, method, reference, paidAt, remark, in.OperatorID)
+	if err != nil {
+		if strings.Contains(err.Error(), "agent_settlement_payments_settlement_id") || strings.Contains(err.Error(), "duplicate key") {
+			return nil, fmt.Errorf("settlement payment already registered")
+		}
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE agent_settlements
+SET status='paid',
+    paid_at=$1,
+    paid_by_user_id=$2,
+    payment_reference=COALESCE($3, payment_reference),
+    updated_at=NOW()
+WHERE id=$4`, paidAt, in.OperatorID, reference, id); err != nil {
+		return nil, err
+	}
+	if err := insertAudit(ctx, tx, in.OperatorID, "admin", "settlement.register_payment", "agent_settlement", id, current, map[string]any{
+		"amount":            in.Amount,
+		"payment_method":    method,
+		"payment_reference": reference,
+		"paid_at":           paidAt,
+		"remark":            remark,
+	}, remark); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return r.GetSettlementByID(ctx, id)
 }
 
@@ -843,6 +943,198 @@ JOIN payment_orders po ON po.user_id = acr.customer_user_id
 	return items, total, rows.Err()
 }
 
+func (r *Repository) IsAgentAdminUser(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_admin_users
+    WHERE user_id = $1 AND status = 'active'
+)`, userID).Scan(&exists)
+	return exists, err
+}
+
+func (r *Repository) ListAgentAdminUsers(ctx context.Context, filter ListFilter) ([]AgentAdminUser, int64, error) {
+	where := ` WHERE 1=1`
+	args := []any{}
+	search := strings.TrimSpace(filter.Search)
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(" AND (email ILIKE $%d OR username ILIKE $%d)", len(args), len(args))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+WITH admin_users AS (
+    SELECT 0::bigint AS id,
+           u.id AS user_id,
+           u.email,
+           COALESCE(u.username, '') AS username,
+           'base' AS source,
+           0 AS source_order,
+           u.status,
+           NULL::text AS created_by_email,
+           u.created_at,
+           NULL::timestamptz AS revoked_at
+    FROM users u
+    WHERE u.deleted_at IS NULL AND u.role = 'admin'
+    UNION ALL
+    SELECT aau.id,
+           u.id AS user_id,
+           u.email,
+           COALESCE(u.username, '') AS username,
+           'delegated' AS source,
+           1 AS source_order,
+           aau.status,
+           creator.email AS created_by_email,
+           aau.created_at,
+           aau.revoked_at
+    FROM agent_admin_users aau
+    JOIN users u ON u.id = aau.user_id AND u.deleted_at IS NULL
+    LEFT JOIN users creator ON creator.id = aau.created_by
+)
+SELECT COUNT(*)
+FROM admin_users
+`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, filter.Limit(), filter.Offset())
+	rows, err := r.db.QueryContext(ctx, `
+WITH admin_users AS (
+SELECT 0::bigint AS id,
+       u.id AS user_id,
+       u.email,
+       COALESCE(u.username, '') AS username,
+       'base' AS source,
+       0 AS source_order,
+       u.status,
+       NULL::text AS created_by_email,
+       u.created_at,
+       NULL::timestamptz AS revoked_at
+FROM users u
+WHERE u.deleted_at IS NULL AND u.role = 'admin'
+UNION ALL
+SELECT aau.id,
+       u.id AS user_id,
+       u.email,
+       COALESCE(u.username, '') AS username,
+       'delegated' AS source,
+       1 AS source_order,
+       aau.status,
+       creator.email AS created_by_email,
+       aau.created_at,
+       aau.revoked_at
+FROM agent_admin_users aau
+JOIN users u ON u.id = aau.user_id AND u.deleted_at IS NULL
+LEFT JOIN users creator ON creator.id = aau.created_by
+)
+SELECT id, user_id, email, username, source, status, created_by_email, created_at, revoked_at
+FROM admin_users
+`+where+` ORDER BY source_order, created_at DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	return scanAgentAdminUsers(rows)
+}
+
+func (r *Repository) GrantAgentAdmin(ctx context.Context, userID, operatorID int64) (*AgentAdminUser, error) {
+	user, err := r.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.Role == "admin" {
+		return nil, fmt.Errorf("base admin already has agent-admin permission")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var id int64
+	if err := tx.QueryRowContext(ctx, `
+INSERT INTO agent_admin_users (user_id, status, created_by, revoked_by, revoked_at, updated_at)
+VALUES ($1, 'active', $2, NULL, NULL, NOW())
+ON CONFLICT (user_id) DO UPDATE
+SET status='active',
+    created_by=EXCLUDED.created_by,
+    revoked_by=NULL,
+    revoked_at=NULL,
+    updated_at=NOW()
+RETURNING id`, userID, operatorID).Scan(&id); err != nil {
+		return nil, err
+	}
+	if err := insertAudit(ctx, tx, operatorID, "admin", "admin_user.grant", "agent_admin_user", id, nil, map[string]any{"user_id": userID, "email": user.Email}, nil); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetAgentAdminUserByID(ctx, id)
+}
+
+func (r *Repository) RevokeAgentAdmin(ctx context.Context, id, operatorID int64) (*AgentAdminUser, error) {
+	current, err := r.GetAgentAdminUserByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE agent_admin_users
+SET status='disabled',
+    revoked_by=$1,
+    revoked_at=NOW(),
+    updated_at=NOW()
+WHERE id=$2`, operatorID, id); err != nil {
+		return nil, err
+	}
+	if err := insertAudit(ctx, tx, operatorID, "admin", "admin_user.revoke", "agent_admin_user", id, current, map[string]any{"status": "disabled"}, nil); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetAgentAdminUserByID(ctx, id)
+}
+
+func (r *Repository) GetAgentAdminUserByID(ctx context.Context, id int64) (*AgentAdminUser, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT aau.id,
+       u.id AS user_id,
+       u.email,
+       COALESCE(u.username, '') AS username,
+       'delegated' AS source,
+       aau.status,
+       creator.email AS created_by_email,
+       aau.created_at,
+       aau.revoked_at
+FROM agent_admin_users aau
+JOIN users u ON u.id = aau.user_id AND u.deleted_at IS NULL
+LEFT JOIN users creator ON creator.id = aau.created_by
+WHERE aau.id = $1`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanAgentAdminUsers(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &items[0], nil
+}
+
 func (r *Repository) ListAuditLogs(ctx context.Context, filter ListFilter) ([]AgentAuditLog, int64, error) {
 	where := ""
 	args := []any{}
@@ -1024,6 +1316,17 @@ SELECT EXISTS (SELECT 1 FROM descendants WHERE id = $2)`, ancestorID, candidateI
 	return exists, err
 }
 
+func optionalTrimmedString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
 func insertAudit(ctx context.Context, exec interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, operatorID int64, role, action, targetType string, targetID int64, before, after any, reason *string) error {
@@ -1106,29 +1409,90 @@ func buildAgentIDWhere(column string, agentID *int64) (string, []any) {
 func settlementSelectSQL() string {
 	return `
 SELECT s.id, s.agent_id, u.email, to_char(s.period_month, 'YYYY-MM'), s.amount, s.reverse_amount,
-       s.net_amount, s.status, s.frozen_until, s.paid_at
+       s.net_amount, s.status, s.frozen_until, s.paid_at,
+       p.amount, p.payment_method, COALESCE(p.payment_reference, s.payment_reference), p.remark,
+       p.created_at, operator.email
 FROM agent_settlements s
 JOIN agent_profiles ap ON ap.id = s.agent_id
-JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL`
+JOIN users u ON u.id = ap.user_id AND u.deleted_at IS NULL
+LEFT JOIN agent_settlement_payments p ON p.settlement_id = s.id
+LEFT JOIN users operator ON operator.id = p.created_by`
 }
 
 func scanSettlements(rows *sql.Rows) ([]AgentSettlement, error) {
 	items := []AgentSettlement{}
 	for rows.Next() {
-		var item AgentSettlement
-		var frozenUntil, paidAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.AgentEmail, &item.PeriodMonth, &item.Amount, &item.ReverseAmount, &item.NetAmount, &item.Status, &frozenUntil, &paidAt); err != nil {
+		item, err := scanSettlementRow(rows)
+		if err != nil {
 			return nil, err
-		}
-		if frozenUntil.Valid {
-			item.FrozenUntil = &frozenUntil.Time
-		}
-		if paidAt.Valid {
-			item.PaidAt = &paidAt.Time
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func scanAgentAdminUsers(rows *sql.Rows) ([]AgentAdminUser, error) {
+	items := []AgentAdminUser{}
+	for rows.Next() {
+		var item AgentAdminUser
+		var createdBy sql.NullString
+		var revokedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Email, &item.Username, &item.Source, &item.Status, &createdBy, &item.CreatedAt, &revokedAt); err != nil {
+			return nil, err
+		}
+		if createdBy.Valid {
+			item.CreatedByEmail = &createdBy.String
+		}
+		if revokedAt.Valid {
+			item.RevokedAt = &revokedAt.Time
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+type settlementScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSettlementRow(row settlementScanner) (AgentSettlement, error) {
+	var item AgentSettlement
+	var frozenUntil, paidAt, paymentRegisteredAt sql.NullTime
+	var paymentAmount sql.NullInt64
+	var paymentMethod, paymentReference, paymentRemark, paymentOperatorEmail sql.NullString
+	err := row.Scan(
+		&item.ID, &item.AgentID, &item.AgentEmail, &item.PeriodMonth, &item.Amount, &item.ReverseAmount,
+		&item.NetAmount, &item.Status, &frozenUntil, &paidAt, &paymentAmount, &paymentMethod,
+		&paymentReference, &paymentRemark, &paymentRegisteredAt, &paymentOperatorEmail,
+	)
+	if err != nil {
+		return item, err
+	}
+	if frozenUntil.Valid {
+		item.FrozenUntil = &frozenUntil.Time
+	}
+	if paidAt.Valid {
+		item.PaidAt = &paidAt.Time
+	}
+	if paymentAmount.Valid {
+		item.PaymentAmount = &paymentAmount.Int64
+	}
+	if paymentMethod.Valid {
+		item.PaymentMethod = &paymentMethod.String
+	}
+	if paymentReference.Valid {
+		item.PaymentReference = &paymentReference.String
+	}
+	if paymentRemark.Valid {
+		item.PaymentRemark = &paymentRemark.String
+	}
+	if paymentRegisteredAt.Valid {
+		item.PaymentRegisteredAt = &paymentRegisteredAt.Time
+	}
+	if paymentOperatorEmail.Valid {
+		item.PaymentOperatorEmail = &paymentOperatorEmail.String
+	}
+	return item, nil
 }
 
 func agentSelectSQL() string {
