@@ -1036,7 +1036,8 @@ FROM admin_users
 		return nil, 0, err
 	}
 	defer rows.Close()
-	return scanAgentAdminUsers(rows)
+	items, err := scanAgentAdminUsers(rows)
+	return items, total, err
 }
 
 func (r *Repository) GrantAgentAdmin(ctx context.Context, userID, operatorID int64) (*AgentAdminUser, error) {
