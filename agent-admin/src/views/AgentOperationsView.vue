@@ -6,7 +6,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import {
   createMyChildAgent,
   listMyChildren,
-  listMyInvites,
+  listMyDevelopableUsers,
   listMyOrders,
   updateMyChildRate,
   type AgentCustomer,
@@ -17,7 +17,7 @@ import { formatDateTime, formatMinorMoney, formatPercent } from '@/utils/format'
 
 const loading = ref(false)
 const error = ref('')
-const invites = ref<AgentCustomer[]>([])
+const developableUsers = ref<AgentCustomer[]>([])
 const children = ref<AgentProfile[]>([])
 const orders = ref<AgentOrder[]>([])
 const childRateInputs = reactive<Record<number, string>>({})
@@ -33,12 +33,12 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [invitePage, childPage, orderPage] = await Promise.all([
-      listMyInvites({ page_size: 50 }),
+    const [developableUserPage, childPage, orderPage] = await Promise.all([
+      listMyDevelopableUsers({ page_size: 50 }),
       listMyChildren({ page_size: 50 }),
       listMyOrders({ page_size: 50 })
     ])
-    invites.value = invitePage.items ?? []
+    developableUsers.value = developableUserPage.items ?? []
     children.value = childPage.items ?? []
     for (const child of children.value) {
       childRateInputs[child.id] = formatRatePercent(child.rate_bps)
@@ -61,10 +61,10 @@ async function submitChild() {
   await loadAll()
 }
 
-function selectedInviteLabel() {
-  const selected = invites.value.find((item) => String(item.user_id) === childForm.user_id)
+function selectedDevelopableUserLabel() {
+  const selected = developableUsers.value.find((item) => String(item.user_id) === childForm.user_id)
   if (!selected) return ''
-  return `${selected.email} / ${selected.username || '-'}`
+  return `${selected.email} / ${sourceLabel(selected.source)}`
 }
 
 async function saveChildRate(child: AgentProfile) {
@@ -80,23 +80,27 @@ function parseRatePercent(value: string) {
   const percent = Number(value)
   return Number.isFinite(percent) ? Math.round(percent * 100) : 0
 }
+
+function sourceLabel(source: AgentCustomer['source']) {
+  return source === 'manual' ? '管理员归属' : '自然推荐'
+}
 </script>
 
 <template>
   <div class="page-stack">
     <p v-if="error" class="error-banner">{{ error }}</p>
 
-    <SectionPanel title="创建下级代理" description="只能把自己推荐码引入的用户指定为下级代理">
+    <SectionPanel title="创建下级代理" description="可从直接归属自己的自然推荐或管理员归属用户中创建下级代理">
       <form class="form-grid" @submit.prevent="submitChild">
         <label class="wide">
-          <span>推荐用户账号</span>
+          <span>可发展用户</span>
           <select v-model="childForm.user_id" class="input" required>
-            <option value="" disabled>选择推荐用户</option>
-            <option v-for="item in invites" :key="item.user_id" :value="String(item.user_id)">
-              {{ item.email }} / {{ item.username || '-' }}
+            <option value="" disabled>选择可发展用户</option>
+            <option v-for="item in developableUsers" :key="item.user_id" :value="String(item.user_id)">
+              {{ item.email }} / {{ sourceLabel(item.source) }}
             </option>
           </select>
-          <small v-if="childForm.user_id" class="field-hint">已选择：{{ selectedInviteLabel() }}</small>
+          <small v-if="childForm.user_id" class="field-hint">已选择：{{ selectedDevelopableUserLabel() }}</small>
         </label>
         <label>
           <span>比例 %</span>
@@ -106,31 +110,35 @@ function parseRatePercent(value: string) {
       </form>
     </SectionPanel>
 
-    <SectionPanel title="我的推荐用户" description="来自原系统推荐关系，可用于创建下级代理">
+    <SectionPanel title="我的可发展用户" description="直接归属于自己的用户，可来自自然推荐或管理员手动归属">
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>用户</th>
+              <th>来源</th>
               <th>推荐码</th>
               <th>套餐</th>
               <th>周期结束</th>
+              <th>状态</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in invites" :key="item.user_id">
+            <tr v-for="item in developableUsers" :key="item.user_id">
               <td>
                 <strong>{{ item.email }}</strong>
                 <small>ID {{ item.user_id }} / {{ item.username }}</small>
               </td>
+              <td>{{ sourceLabel(item.source) }}</td>
               <td>{{ item.source_referral_code || '-' }}</td>
               <td>{{ item.subscription_name || '-' }}</td>
               <td>{{ formatDateTime(item.period_end_at) }}</td>
+              <td>{{ item.status === 'scheduled' ? '待生效' : '有效' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <EmptyState v-if="!invites.length && !loading" />
+      <EmptyState v-if="!developableUsers.length && !loading" />
     </SectionPanel>
 
     <SectionPanel title="我的下级代理" description="可调整直属下级比例，比例必须低于自己的比例">

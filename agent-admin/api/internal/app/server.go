@@ -421,9 +421,13 @@ func (s *Server) routeAgent(w http.ResponseWriter, r *http.Request) {
 		filter.AgentID = &agentID
 		items, total, err := s.repo.ListCustomers(r.Context(), filter)
 		writePage(w, items, total, filter, err)
+	case path == "/developable-users" && r.Method == http.MethodGet:
+		filter := parseListFilter(r)
+		items, total, err := s.repo.ListDevelopableUsers(r.Context(), *subject.Agent, filter)
+		writePage(w, items, total, filter, err)
 	case path == "/invites" && r.Method == http.MethodGet:
 		filter := parseListFilter(r)
-		items, total, err := s.repo.ListInvites(r.Context(), subject.Agent.UserID, filter)
+		items, total, err := s.repo.ListDevelopableUsers(r.Context(), *subject.Agent, filter)
 		writePage(w, items, total, filter, err)
 	case path == "/children" && r.Method == http.MethodGet:
 		filter := parseListFilter(r)

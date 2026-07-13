@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type AxiosResponse } from 'axios'
 import type { ApiEnvelope } from '@/types'
+import { getLocalDemoAdapter } from '@/api/localDemo'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
@@ -7,6 +8,7 @@ export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
   timeout: 30000,
+  adapter: getLocalDemoAdapter(),
   headers: {
     'Content-Type': 'application/json'
   }

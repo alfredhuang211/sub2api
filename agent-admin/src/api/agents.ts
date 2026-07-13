@@ -369,6 +369,16 @@ export async function listMyInvites(params: ListParams = {}) {
   return data
 }
 
+export async function listMyDevelopableUsers(params: ListParams = {}) {
+  const { data } = await apiClient.get<PaginatedResponse<AgentCustomer>>(
+    '/agent/developable-users',
+    {
+      params: withDefaults(params)
+    }
+  )
+  return data
+}
+
 export async function listMyChildren(params: ListParams = {}) {
   const { data } = await apiClient.get<PaginatedResponse<AgentProfile>>('/agent/children', {
     params: withDefaults(params)

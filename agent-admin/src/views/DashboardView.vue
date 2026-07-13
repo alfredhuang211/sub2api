@@ -42,6 +42,37 @@ async function loadDashboard() {
   <div class="page-stack">
     <p v-if="error" class="error-banner">{{ error }}</p>
 
+    <SectionPanel title="使用说明" description="Agent Admin 复用 sub2api 原系统账号体系，用于管理代理层级、客户归属、分成和结算。">
+      <div class="usage-guide">
+        <p class="usage-guide-intro">
+          管理员登录后先完成管理员授权、代理指定和客户归属配置；代理商登录后可在工作台查看自己的代理身份、经营汇总、分成记录和结算状态。所有比例调整、客户归属和结算处理都会进入审计链路，便于后续追踪。
+        </p>
+        <div class="usage-guide-steps">
+          <div class="usage-guide-step">
+            <span>01</span>
+            <div>
+              <strong>确认登录身份</strong>
+              <p>使用原系统账号密码登录。管理员可进入代理管理和系统设置，代理商只能查看自己权限范围内的数据。</p>
+            </div>
+          </div>
+          <div class="usage-guide-step">
+            <span>02</span>
+            <div>
+              <strong>配置代理关系</strong>
+              <p>管理员从原系统用户中指定代理商，设置等级、上级代理和分成比例，再按需调整客户归属。</p>
+            </div>
+          </div>
+          <div class="usage-guide-step">
+            <span>03</span>
+            <div>
+              <strong>跟踪分成结算</strong>
+              <p>系统按套餐周期确认收入生成分成，结算前会扣除退款或冲正金额，可在分成记录和结算记录中核对。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </SectionPanel>
+
     <section class="metrics-grid">
       <MetricCard label="代理总数" :value="String(adminSummary?.total_agents ?? '-')" detail="管理员视角" />
       <MetricCard label="有效代理" :value="String(adminSummary?.active_agents ?? '-')" detail="不含禁用代理" />

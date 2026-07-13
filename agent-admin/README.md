@@ -20,6 +20,16 @@ pnpm dev
 
 By default the dev server runs on `http://localhost:3100` and proxies `/api` to `http://localhost:3101`.
 
+If no backend database is available and you only need to inspect the UI, start the frontend with local demo data:
+
+```bash
+VITE_AGENT_ADMIN_DEMO=true pnpm dev
+```
+
+Then open `http://localhost:3100/login` and click `进入本地演示`.
+
+This demo mode is only wired into the Vite dev server. Production builds and Docker images always use the disabled implementation, so the built `dist` does not include the demo entry, demo token, or mock data.
+
 Override the backend with:
 
 ```bash

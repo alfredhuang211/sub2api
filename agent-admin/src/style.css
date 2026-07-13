@@ -343,6 +343,57 @@ h2 {
   font-size: 13px;
 }
 
+.usage-guide {
+  display: grid;
+  gap: 16px;
+}
+
+.usage-guide-intro {
+  max-width: 980px;
+  margin-bottom: 0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.usage-guide-steps {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.usage-guide-step {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.usage-guide-step > span {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8f3ff;
+  color: #1667d9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.usage-guide-step strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.usage-guide-step p {
+  margin-bottom: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .form-grid {
   display: grid;
   align-items: end;
@@ -676,7 +727,8 @@ h2 {
 
   .metrics-grid,
   .metrics-grid.compact,
-  .detail-grid {
+  .detail-grid,
+  .usage-guide-steps {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -694,7 +746,8 @@ h2 {
   .metrics-grid,
   .metrics-grid.compact,
   .detail-grid,
-  .definition-list {
+  .definition-list,
+  .usage-guide-steps {
     grid-template-columns: 1fr;
   }
 

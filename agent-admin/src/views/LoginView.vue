@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref, shallowRef, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login, login2FA, saveAuthTokens } from '@/api/auth'
+import { getLocalDemoLoginResponse, loadLocalDemoLoginEntry } from '@/api/localDemo'
 import { getCurrentUser } from '@/api/session'
 import { getPublicSettings } from '@/api/settings'
 
@@ -39,8 +40,16 @@ const maskedEmail = ref('')
 const loading = ref(false)
 const settingsLoading = ref(true)
 const error = ref('')
+const demoLoginEntry = shallowRef<Component | null>(null)
 
-onMounted(loadPublicSettings)
+onMounted(() => {
+  loadPublicSettings()
+  loadDemoLoginEntry()
+})
+
+async function loadDemoLoginEntry() {
+  demoLoginEntry.value = await loadLocalDemoLoginEntry()
+}
 
 async function loadPublicSettings() {
   try {
@@ -114,6 +123,24 @@ async function submitLogin() {
   }
 }
 
+async function enterDemoMode() {
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await getLocalDemoLoginResponse()
+    if (!response) return
+    saveAuthTokens(response)
+    await getCurrentUser(true)
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
+    await router.replace(redirect)
+  } catch (err) {
+    const message = err && typeof err === 'object' && 'message' in err ? String((err as { message?: string }).message) : ''
+    error.value = message || '操作失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
+
 async function renderTurnstile() {
   if (!turnstileContainer.value || turnstileWidgetId.value || !turnstileSiteKey.value) {
     return
@@ -182,6 +209,13 @@ function loadTurnstileScript() {
       </div>
 
       <form class="login-form" @submit.prevent="submitLogin">
+        <component
+          :is="demoLoginEntry"
+          v-if="demoLoginEntry && !tempToken"
+          :loading="loading"
+          @enter="enterDemoMode"
+        />
+
         <label v-if="!tempToken">
           <span>邮箱</span>
           <input v-model.trim="email" class="input" type="email" autocomplete="username" required />

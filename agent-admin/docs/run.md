@@ -42,6 +42,16 @@ VITE_DEV_PROXY_TARGET=http://localhost:3101 \
 pnpm dev
 ```
 
+如果暂时没有可用数据库或后端服务，只需要查看页面，可以启用前端本地演示数据：
+
+```bash
+VITE_AGENT_ADMIN_DEMO=true pnpm dev
+```
+
+打开 `http://localhost:3100/login` 后点击 `进入本地演示`，系统会以同时具备基础管理员、管理员和代理商权限的演示账号进入后台。
+
+本地演示模式只在 `vite dev` / `vite serve` 阶段接入。执行 `pnpm build` 或构建 Docker 正式镜像时，Vite 会强制替换为空实现，正式 `dist` 中不会包含演示入口、演示 Token 或 mock 数据。
+
 开发模式下可单独启动 API：
 
 ```bash

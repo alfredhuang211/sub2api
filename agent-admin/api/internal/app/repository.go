@@ -826,36 +826,23 @@ func (r *Repository) ListChildren(ctx context.Context, parentAgentID int64, filt
 	return items, total, err
 }
 
-func (r *Repository) ListInvites(ctx context.Context, inviterUserID int64, filter ListFilter) ([]AgentCustomer, int64, error) {
-	where := ` WHERE ua.inviter_id = $1 AND u.deleted_at IS NULL`
-	args := []any{inviterUserID}
+func (r *Repository) ListDevelopableUsers(ctx context.Context, parent AgentProfile, filter ListFilter) ([]AgentCustomer, int64, error) {
+	args := []any{parent.ID, parent.UserID}
+	where := ""
 	if strings.TrimSpace(filter.Search) != "" {
 		args = append(args, "%"+strings.TrimSpace(filter.Search)+"%")
-		where += fmt.Sprintf(" AND (u.email ILIKE $%d OR u.username ILIKE $%d)", len(args), len(args))
+		where = fmt.Sprintf(" WHERE candidate.email ILIKE $%d OR candidate.username ILIKE $%d", len(args), len(args))
 	}
 	var total int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_affiliates ua JOIN users u ON u.id = ua.user_id`+where, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, developableUsersCTE()+`SELECT COUNT(*) FROM candidates candidate`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, filter.Limit(), filter.Offset())
-	rows, err := r.db.QueryContext(ctx, `
-SELECT 0::bigint, u.id, u.email, COALESCE(u.username,''), 'referral'::text,
-       inviter_aff.aff_code, ap.id, COALESCE(inviter.email,''), sub_group.name, sub.expires_at,
-       0::bigint, 'active'::text
-FROM user_affiliates ua
-JOIN users u ON u.id = ua.user_id AND u.deleted_at IS NULL
-JOIN users inviter ON inviter.id = ua.inviter_id AND inviter.deleted_at IS NULL
-JOIN agent_profiles ap ON ap.user_id = ua.inviter_id
-LEFT JOIN user_affiliates inviter_aff ON inviter_aff.user_id = ua.inviter_id
-LEFT JOIN LATERAL (
-    SELECT us.expires_at, us.group_id
-    FROM user_subscriptions us
-    WHERE us.user_id = u.id AND us.deleted_at IS NULL
-    ORDER BY us.expires_at DESC
-    LIMIT 1
-) sub ON true
-LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_at IS NULL
-`+where+` ORDER BY ua.created_at DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+	rows, err := r.db.QueryContext(ctx, developableUsersCTE()+`
+SELECT id, user_id, email, username, source, source_referral_code, agent_id, agent_name,
+       subscription_name, period_end_at, confirmed_revenue, status
+FROM candidates candidate
+`+where+` ORDER BY created_at DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -864,17 +851,53 @@ LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_
 	return items, total, err
 }
 
+func (r *Repository) ListInvites(ctx context.Context, inviterUserID int64, filter ListFilter) ([]AgentCustomer, int64, error) {
+	agent, err := r.GetAgentByUserID(ctx, inviterUserID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return r.ListDevelopableUsers(ctx, *agent, filter)
+}
+
 func (r *Repository) CreateChildAgent(ctx context.Context, parent AgentProfile, userID int64, rateBPS *int, operatorID int64) (*AgentProfile, error) {
 	if parent.Level >= 3 {
 		return nil, ErrForbidden
 	}
+	var alreadyAgent bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM agent_profiles WHERE user_id = $1)`, userID).Scan(&alreadyAgent); err != nil {
+		return nil, err
+	}
+	if alreadyAgent {
+		return nil, fmt.Errorf("user is already an agent")
+	}
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_affiliates WHERE user_id = $1 AND inviter_id = $2)`, userID, parent.UserID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `
+SELECT (
+    EXISTS (
+        SELECT 1
+        FROM agent_customer_relations
+        WHERE customer_user_id = $1
+          AND agent_id = $2
+          AND status IN ('active', 'scheduled')
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM user_affiliates
+        WHERE user_id = $1
+          AND inviter_id = $3
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agent_customer_relations
+              WHERE customer_user_id = $1
+                AND status IN ('active', 'scheduled')
+          )
+    )
+)`, userID, parent.ID, parent.UserID).Scan(&exists)
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("only referred users can be promoted to child agent")
+		return nil, fmt.Errorf("only directly assigned or referred users can be promoted to child agent")
 	}
 	input := CreateAgentInput{
 		UserID:        userID,
@@ -1592,6 +1615,83 @@ LEFT JOIN (
     FROM agent_commission_periods
     GROUP BY customer_user_id, agent_id
 ) revenue ON revenue.customer_user_id = acr.customer_user_id AND revenue.agent_id = acr.agent_id`
+}
+
+func developableUsersCTE() string {
+	return `
+WITH candidates AS (
+    SELECT acr.id,
+           u.id AS user_id,
+           u.email,
+           COALESCE(u.username,'') AS username,
+           acr.source,
+           acr.source_referral_code,
+           acr.agent_id,
+           agent_user.email AS agent_name,
+           sub_group.name AS subscription_name,
+           sub.expires_at AS period_end_at,
+           COALESCE(revenue.confirmed_revenue,0)::bigint AS confirmed_revenue,
+           acr.status,
+           acr.created_at
+    FROM agent_customer_relations acr
+    JOIN users u ON u.id = acr.customer_user_id AND u.deleted_at IS NULL
+    JOIN agent_profiles ap ON ap.id = acr.agent_id
+    JOIN users agent_user ON agent_user.id = ap.user_id AND agent_user.deleted_at IS NULL
+    LEFT JOIN agent_profiles existing_agent ON existing_agent.user_id = u.id
+    LEFT JOIN LATERAL (
+        SELECT us.expires_at, us.group_id
+        FROM user_subscriptions us
+        WHERE us.user_id = u.id AND us.deleted_at IS NULL
+        ORDER BY us.expires_at DESC
+        LIMIT 1
+    ) sub ON true
+    LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_at IS NULL
+    LEFT JOIN (
+        SELECT customer_user_id, agent_id, SUM(confirmed_revenue) AS confirmed_revenue
+        FROM agent_commission_periods
+        GROUP BY customer_user_id, agent_id
+    ) revenue ON revenue.customer_user_id = acr.customer_user_id AND revenue.agent_id = acr.agent_id
+    WHERE acr.agent_id = $1
+      AND acr.status IN ('active', 'scheduled')
+      AND existing_agent.id IS NULL
+
+    UNION ALL
+
+    SELECT 0::bigint AS id,
+           u.id AS user_id,
+           u.email,
+           COALESCE(u.username,'') AS username,
+           'referral'::text AS source,
+           inviter_aff.aff_code AS source_referral_code,
+           ap.id AS agent_id,
+           COALESCE(inviter.email,'') AS agent_name,
+           sub_group.name AS subscription_name,
+           sub.expires_at AS period_end_at,
+           0::bigint AS confirmed_revenue,
+           'active'::text AS status,
+           ua.created_at
+    FROM user_affiliates ua
+    JOIN users u ON u.id = ua.user_id AND u.deleted_at IS NULL
+    JOIN users inviter ON inviter.id = ua.inviter_id AND inviter.deleted_at IS NULL
+    JOIN agent_profiles ap ON ap.user_id = ua.inviter_id
+    LEFT JOIN user_affiliates inviter_aff ON inviter_aff.user_id = ua.inviter_id
+    LEFT JOIN agent_profiles existing_agent ON existing_agent.user_id = u.id
+    LEFT JOIN agent_customer_relations existing_relation
+      ON existing_relation.customer_user_id = ua.user_id
+     AND existing_relation.status IN ('active', 'scheduled')
+    LEFT JOIN LATERAL (
+        SELECT us.expires_at, us.group_id
+        FROM user_subscriptions us
+        WHERE us.user_id = u.id AND us.deleted_at IS NULL
+        ORDER BY us.expires_at DESC
+        LIMIT 1
+    ) sub ON true
+    LEFT JOIN groups sub_group ON sub_group.id = sub.group_id AND sub_group.deleted_at IS NULL
+    WHERE ua.inviter_id = $2
+      AND existing_agent.id IS NULL
+      AND existing_relation.id IS NULL
+)
+`
 }
 
 func scanCustomers(rows *sql.Rows) ([]AgentCustomer, error) {

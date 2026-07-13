@@ -195,6 +195,7 @@ GET    /api/v1/admin/agent-audit-logs
 GET    /api/v1/agent/profile
 GET    /api/v1/agent/dashboard
 GET    /api/v1/agent/customers
+GET    /api/v1/agent/developable-users
 GET    /api/v1/agent/invites
 GET    /api/v1/agent/children
 POST   /api/v1/agent/children
@@ -487,8 +488,8 @@ payment_audit_logs
 
 ### 创建下级代理
 
-1. 代理选择自己推荐码引入的推荐用户。
-2. 系统读取 `user_affiliates` 校验推荐关系。
+1. 代理选择直接归属于自己的可发展用户。
+2. 系统读取 `agent_customer_relations` 校验客户归属；若自然推荐关系尚未同步为归属记录，则兼容读取 `user_affiliates` 校验推荐关系。
 3. 系统校验层级不超过 3 级。
 4. 系统校验分成比例低于上级比例。
 5. 系统创建代理身份和比例。
@@ -751,7 +752,7 @@ agent-admin 改动不触发 sub2api CI 和 Security Scan。
 - 管理员代理管理、客户归属、佣金、结算、审计 API。
 - 基础管理员授权和撤销 agent-admin 管理员 API。
 - 管理员代理强制调整和结算调整 API。
-- 代理端资料、客户、推荐用户、下级、上级、佣金、结算、订单 API。
+- 代理端资料、客户、可发展用户、下级、上级、佣金、结算、订单 API。
 - 代理经营前端页面。
 - 客户归属变更记录 API 和前端列表。
 - 自然推荐关系同步。
